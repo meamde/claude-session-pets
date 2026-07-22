@@ -1,0 +1,13 @@
+{
+  "name": "claude-session-pets",
+  "version": "1.0.0",
+  "description": "macOS desktop pets that watch your running Claude CLI sessions",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.4.4",
+    "electron": "^31.0.0"
+  }
+}

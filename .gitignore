@@ -1,0 +1,14 @@
+# 의존성
+node_modules/
+
+# 빌드 산출물 (.app 등) — 로컬에서 electron-packager로 생성
+dist/
+
+# macOS
+.DS_Store
+
+# Claude Code 로컬 설정 (머신별 권한 허용 목록)
+.claude/settings.local.json
+
+# 로그
+*.log

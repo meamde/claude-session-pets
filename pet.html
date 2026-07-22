@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Claude Session Pets</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  }
+
+  /* ── 펫 ─────────────────────────────────── */
+  #pet {
+    position: absolute;
+    left: 0; top: 0;
+    width: 128px; height: 128px;
+    cursor: grab;
+    will-change: transform;
+    z-index: 10;
+  }
+  #pet.dragging { cursor: grabbing; }
+  #sprite-wrap {
+    width: 100%; height: 100%;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  #sprite {
+    max-width: 100%; max-height: 100%;
+    image-rendering: auto;
+    pointer-events: none;
+    transform-origin: 50% 100%;
+    filter: drop-shadow(0 4px 6px rgba(0,0,0,.25));
+  }
+  /* 애니메이션 상태 */
+  #pet.anim-idle #sprite   { animation: breathe 2.4s ease-in-out infinite; }
+  #pet.anim-walk #sprite   { animation: walkbob .45s ease-in-out infinite; }
+  #pet.anim-drag #sprite   { animation: dragswing .8s ease-in-out infinite; }
+  #pet.anim-sleep #sprite  { animation: sleepy 3.5s ease-in-out infinite; }
+  #pet.anim-fall #sprite   { animation: none; transform: scaleY(1.15) scaleX(.9); }
+  #pet.anim-land #sprite   { animation: land .35s ease-out 1; }
+  #pet.anim-work #sprite   { animation: worky .5s ease-in-out infinite; }
+
+  @keyframes breathe {
+    0%,100% { transform: scaleY(1); }
+    50%     { transform: scaleY(.94) scaleX(1.03); }
+  }
+  @keyframes walkbob {
+    0%,100% { transform: translateY(0) rotate(-4deg); }
+    50%     { transform: translateY(-9px) rotate(4deg); }
+  }
+  @keyframes dragswing {
+    0%,100% { transform: rotate(-10deg); }
+    50%     { transform: rotate(10deg); }
+  }
+  @keyframes sleepy {
+    0%,100% { transform: rotate(6deg) scaleY(.92); }
+    50%     { transform: rotate(6deg) scaleY(.88); }
+  }
+  @keyframes land {
+    0%   { transform: scaleY(.7) scaleX(1.25); }
+    60%  { transform: scaleY(1.08) scaleX(.96); }
+    100% { transform: scaleY(1) scaleX(1); }
+  }
+  @keyframes worky {
+    0%,100% { transform: rotate(-2deg) scaleY(.97); }
+    50%     { transform: rotate(2deg) scaleY(1); }
+  }
+
+  /* 뱃지: 실행 중인 claude 프로세스 수 */
+  #badge {
+    position: absolute; top: -2px; right: -2px;
+    min-width: 22px; height: 22px;
+    padding: 0 6px;
+    border-radius: 11px;
+    background: #d97757;
+    color: #fff;
+    font-size: 12px; font-weight: 700;
+    display: none;
+    align-items: center; justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.3);
+    pointer-events: none;
+  }
+  #badge.show { display: flex; }
+  #badge.busy { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); }
+    50%     { transform: scale(1.18); background: #ff8a5c; }
+  }
+
+  /* 말풍선 / 상태 이모지 */
+  #bubble {
+    position: absolute;
+    bottom: calc(100% + 14px); left: 50%;
+    background: linear-gradient(180deg, #33291f, #262019);
+    color: #fff;
+    border: 2px solid #d97757;
+    border-radius: 16px;
+    padding: 10px 16px;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.45;
+    max-width: 320px;
+    width: max-content;
+    text-align: center;
+    white-space: pre-line;
+    box-shadow: 0 6px 24px rgba(0,0,0,.5), 0 0 0 4px rgba(217,119,87,.18);
+    display: none;
+    pointer-events: none;
+    transform-origin: 50% 100%;
+    --shift: 0px;
+    transform: translateX(calc(-50% + var(--shift)));
+  }
+  #bubble::after {
+    content: '';
+    position: absolute;
+    top: 100%; left: calc(50% - var(--shift));
+    margin-left: -8px;
+    border: 8px solid transparent;
+    border-top-color: #d97757;
+  }
+  #bubble.show {
+    display: block;
+    animation: bubblepop .3s cubic-bezier(.34,1.56,.64,1) 1;
+  }
+  @keyframes bubblepop {
+    0%   { transform: translateX(calc(-50% + var(--shift))) scale(.5); opacity: 0; }
+    100% { transform: translateX(calc(-50% + var(--shift))) scale(1); opacity: 1; }
+  }
+  #zzz {
+    position: absolute; top: -14px; right: 8px;
+    font-size: 20px; display: none; pointer-events: none;
+    animation: zfloat 2s ease-in-out infinite;
+  }
+  #zzz.show { display: block; }
+  @keyframes zfloat {
+    0%   { transform: translateY(0); opacity: .3; }
+    50%  { transform: translateY(-8px); opacity: 1; }
+    100% { transform: translateY(-16px); opacity: 0; }
+  }
+
+  /* ── 세션 펫 (실행 중인 다른 claude 세션들) ── */
+  .spet {
+    position: absolute; left: 0; top: 0;
+    width: 66px;
+    z-index: 9;
+    cursor: grab;
+    will-change: transform;
+  }
+  .spet.grabbing { cursor: grabbing; z-index: 15; }
+  .spet .swrap {
+    width: 66px; height: 66px;
+    display: flex; align-items: flex-end; justify-content: center;
+    transform-origin: 50% 100%; /* 바운스/스케일(뽀용·점프)은 발 딛고 통통 */
+    /* position:relative 필수: 없으면(static) 부모 바운스+자식 회전 합성 시 회전축이 우하단으로 틀어진다 (겪은 버그) */
+    position: relative;
+  }
+  /* .sbody = 회전 레이어 (회전축 고정). .sbounce = 위치·스케일 레이어 (안쪽).
+     회전을 바깥에 두고 바운스를 안쪽에 둬야 회전축(=.sbody origin)이 바운스로 안 움직이고 고정된다.
+     (반대로 하면 축이 위아래로 움직여 회전이 이상해짐 — 오래 헤맨 원인) */
+  /* 회전축은 render()가 픽셀 무게중심(균형점 cx·cy)으로 매 프레임 설정(미러 시 1-cx). 아래 50% 50%는 이미지 로드 전 fallback.
+     박스 기하중심(50%)은 부리 등 한쪽으로 튀어나온 모양에서 몸 중심보다 옆으로 치우쳐 회전이 "한쪽 쏠림"으로 보였다 → 균형점 사용 */
+  .spet .sbody   { display: inline-block; line-height: 0; transform-origin: 50% 50%; }
+  .spet .sbounce { display: inline-block; line-height: 0; transform-origin: 50% 100%; }
+  .spet .ssprite {
+    display: block;
+    max-width: 66px; max-height: 66px;  /* 절대값: 부모(.sbody)가 이미지 크기로 정확히 맞춰지도록 */
+    transform-origin: 50% 50%;          /* 좌우반전(scaleX)은 가로중앙 기준 */
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,.35));
+    pointer-events: none;
+  }
+  .spet .slabel {
+    margin-top: 3px; margin-left: 50%;
+    transform: translateX(-50%);
+    width: max-content; max-width: 130px;
+    text-align: center;
+    font-size: 11px; font-weight: 600;
+    color: #fff;
+    background: rgba(28,27,26,.85);
+    border: 1px solid rgba(217,119,87,.55);
+    border-radius: 8px;
+    padding: 1px 7px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .spet .sbubble {
+    position: absolute; left: 50%; top: -4px;
+    transform: translate(-50%, -100%);
+    background: linear-gradient(180deg, #33291f, #262019);
+    color: #fff;
+    border: 1.5px solid #d97757;
+    border-radius: 12px;
+    padding: 5px 10px;
+    font-size: 12px; font-weight: 700;
+    width: max-content; max-width: 250px;
+    white-space: normal; word-break: break-word;
+    text-align: center; line-height: 1.4;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45), 0 0 0 3px rgba(217,119,87,.15);
+    display: none; pointer-events: none;
+  }
+  .spet .sbubble.show { display: block; animation: spop .3s cubic-bezier(.34,1.56,.64,1); }
+  .spet .sbubble::after {
+    content: ''; position: absolute; top: 100%; left: 50%;
+    margin-left: -6px; border: 6px solid transparent; border-top-color: #d97757;
+  }
+  @keyframes spop {
+    0%   { transform: translate(-50%,-100%) scale(.5); opacity: 0; }
+    100% { transform: translate(-50%,-100%) scale(1); opacity: 1; }
+  }
+  /* 세션펫 우클릭 컨텍스트 메뉴 (이미지 설정) */
+  .spet-menu {
+    position: absolute; z-index: 30;
+    background: linear-gradient(180deg, #33291f, #262019);
+    border: 1.5px solid #d97757; border-radius: 10px;
+    padding: 4px; min-width: 156px;
+    box-shadow: 0 6px 22px rgba(0,0,0,.5), 0 0 0 3px rgba(217,119,87,.15);
+    font-size: 12px; font-weight: 600; color: #fff;
+    animation: spop2 .14s ease-out;
+  }
+  @keyframes spop2 { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+  .spet-menu-item {
+    padding: 7px 11px; border-radius: 6px; cursor: pointer;
+    white-space: nowrap; display: flex; align-items: center; gap: 7px;
+  }
+  .spet-menu-item:hover { background: rgba(217,119,87,.32); }
+  .spet-menu-item .mk { width: 13px; text-align: center; opacity: .95; }
+  .spet-menu-sep { height: 1px; background: rgba(217,119,87,.28); margin: 4px 6px; }
+  /* 완료 말풍선: 더 크고 눈에 띄게 + 은은한 맥동 */
+  .spet .sbubble.big {
+    font-size: 16px; font-weight: 800;
+    padding: 9px 16px;
+    border-width: 2.5px; border-radius: 15px;
+    box-shadow: 0 6px 22px rgba(0,0,0,.5), 0 0 0 5px rgba(217,119,87,.22);
+    animation: spop .3s cubic-bezier(.34,1.56,.64,1), bubbleglow 1.4s ease-in-out .3s infinite;
+  }
+  .spet .sbubble.big::after { margin-left: -8px; border-width: 8px; }
+  @keyframes bubbleglow {
+    0%,100% { box-shadow: 0 6px 22px rgba(0,0,0,.5), 0 0 0 5px rgba(217,119,87,.18); }
+    50%     { box-shadow: 0 6px 26px rgba(0,0,0,.55), 0 0 0 9px rgba(217,119,87,.30); }
+  }
+  /* 몸짓을 두 레이어로 분리한다:
+     · 회전(좌우 흔들)은 .sbody — origin이 발(render가 설정)이라 발 딛고 갸우뚱
+     · 위치/스케일(바운스·점프·뽀용)은 .swrap — 축과 무관하므로 회전을 망치지 않음
+     한 상태에서 둘 다 걸리면(walk) 자연스럽게 합성된다. */
+
+  /* ── 회전 레이어 (.sbody) ── */
+  .spet.anim-walk .sbody { animation: sp-walkrot .5s ease-in-out infinite; }
+  .spet.anim-work .sbody { animation: sp-workrot .6s ease-in-out infinite; }
+  .spet.anim-wait .sbody { animation: sp-wait .9s ease-in-out infinite; }   /* 입력 필요: 갸웃갸웃 */
+  .spet.anim-drag .sbody { animation: sp-drag .8s ease-in-out infinite; }
+  /* idle/done/fall은 .sbody 회전 없음(가만히 있을 땐 좌우로 안 흔들린다) */
+  @keyframes sp-walkrot { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+  @keyframes sp-workrot { 0%,100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+  @keyframes sp-wait    { 0%,100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+  @keyframes sp-drag    { 0%,100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
+
+  /* ── 위치·스케일 레이어 (.sbounce, 안쪽) — 회전축을 안 건드림 ── */
+  .spet.anim-idle .sbounce { animation: sp-idle 1.7s ease-in-out infinite; }   /* 뽀용뽀용 */
+  .spet.anim-walk .sbounce { animation: sp-bounce .5s ease-in-out infinite; }  /* 걷기 바운스 */
+  .spet.anim-work .sbounce { animation: sp-work .6s ease-in-out infinite; }    /* 작업 중 들썩 */
+  .spet.anim-done .sbounce { animation: sp-jump 1.6s cubic-bezier(.28,.84,.42,1) infinite; }
+  .spet.anim-fall .sbounce { animation: none; transform: scaleY(1.15) scaleX(.9); }
+  @keyframes sp-idle   { 0%,100% { transform: translateY(0) scaleY(1) scaleX(1); }
+                         50%     { transform: translateY(-4px) scaleY(1.05) scaleX(.96); } }
+  @keyframes sp-bounce { 0%,100% { transform: translateY(0); }
+                         50%     { transform: translateY(-8px); } }
+  /* work는 .sbody 회전(sp-workrot)이 있으므로 .swrap엔 비균등 scale 금지 → translate만
+     (부모 비균등 scale + 자식 rotate = 전단 왜곡으로 회전축이 우하단으로 틀어짐) */
+  @keyframes sp-work   { 0%,100% { transform: translateY(0); }
+                         50%     { transform: translateY(-3px); } }
+  @keyframes sp-jump {
+    0%   { transform: translateY(0); }
+    12%  { transform: translateY(-30px); }
+    24%  { transform: translateY(0) scaleY(.9) scaleX(1.08); }
+    30%  { transform: translateY(0) scaleY(1) scaleX(1); }
+    40%  { transform: translateY(-14px); }
+    50%  { transform: translateY(0) scaleY(.94) scaleX(1.04); }
+    56%  { transform: translateY(0); }
+    100% { transform: translateY(0); }
+  }
+
+  /* ── 패널 ───────────────────────────────── */
+  #panel {
+    position: absolute;
+    width: 420px;
+    max-height: 520px;
+    background: rgba(28, 27, 26, .96);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    color: #eee;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 20;
+  }
+  #panel.show { display: flex; }
+  #panel-header {
+    display: flex; align-items: center;
+    padding: 10px 12px 0;
+    gap: 6px;
+  }
+  .tab {
+    padding: 6px 12px;
+    border-radius: 8px 8px 0 0;
+    font-size: 13px;
+    cursor: pointer;
+    color: #aaa;
+    background: transparent;
+    border: none;
+  }
+  .tab.active { color: #fff; background: rgba(255,255,255,.08); }
+  #panel-close {
+    margin-left: auto;
+    background: none; border: none; color: #888;
+    font-size: 16px; cursor: pointer;
+  }
+  #panel-close:hover { color: #fff; }
+  .tab-body {
+    display: none;
+    flex-direction: column;
+    padding: 12px;
+    gap: 8px;
+    overflow-y: auto;
+    border-top: 1px solid rgba(255,255,255,.08);
+  }
+  .tab-body.active { display: flex; }
+
+  input[type=text], textarea {
+    width: 100%;
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px;
+    color: #eee;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  input[type=text]:focus, textarea:focus { border-color: #d97757; }
+  textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row label { font-size: 12px; color: #999; white-space: nowrap; }
+
+  button.btn {
+    background: #d97757;
+    border: none; border-radius: 8px;
+    color: #fff; font-size: 13px; font-weight: 600;
+    padding: 8px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  button.btn:hover { background: #e8865f; }
+  button.btn.ghost {
+    background: rgba(255,255,255,.08);
+    font-weight: 400;
+  }
+  button.btn.ghost:hover { background: rgba(255,255,255,.16); }
+  button.btn.danger { background: #b33a3a; }
+  button.btn.danger:hover { background: #d04444; }
+  button.btn.small { padding: 4px 9px; font-size: 12px; }
+
+  /* 세션 출력 */
+  .session {
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+  .session .s-head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #bbb;
+    margin-bottom: 6px;
+  }
+  .session .s-head .s-status { font-size: 11px; }
+  .session .s-head .s-prompt {
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #eee;
+  }
+  .session pre {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #cfe8cf;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 180px;
+    overflow-y: auto;
+    user-select: text;
+  }
+  .session pre .err { color: #f0a0a0; }
+
+  /* 프로세스 목록 */
+  .proc {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.05);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+  }
+  .proc .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #6c6; flex-shrink: 0;
+  }
+  .proc .dot.busy { background: #f5a623; animation: pulse 1.2s infinite; }
+  .proc .dot.wait { background: #4a9eff; animation: pulse 1.2s infinite; }
+  .proc .p-info { flex: 1; min-width: 0; }
+  .proc .p-cwd {
+    color: #eee; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .proc .p-meta { color: #999; font-size: 11px; }
+  .empty { color: #888; font-size: 13px; text-align: center; padding: 16px 0; }
+  .proc-wrap { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+  .send-row {
+    display: flex; gap: 6px;
+    padding: 4px 6px 6px 24px;
+  }
+
+  .hint { font-size: 11px; color: #888; }
+  .sep { border-top: 1px solid rgba(255,255,255,.08); margin: 4px 0; }
+
+  /* 잡담 */
+  #chat-log {
+    display: flex; flex-direction: column; gap: 8px;
+    min-height: 180px; max-height: 300px;
+    overflow-y: auto;
+    padding: 4px 2px;
+  }
+  .msg {
+    max-width: 82%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+  .msg.me {
+    align-self: flex-end;
+    background: #d97757;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.pet {
+    align-self: flex-start;
+    background: rgba(255,255,255,.09);
+    color: #eee;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.pet.thinking { color: #999; font-style: italic; }
+  .msg.pet.error { color: #f0a0a0; }
+</style>
+</head>
+<body>
+
+  <div id="pet" class="interactive anim-idle">
+    <div id="bubble"></div>
+    <div id="zzz">💤</div>
+    <div id="sprite-wrap"><img id="sprite" alt="pet"></div>
+    <div id="badge"></div>
+  </div>
+
+  <div id="panel" class="interactive">
+    <div id="panel-header">
+      <button class="tab active" data-tab="chat">💬 잡담</button>
+      <button class="tab" data-tab="cmd">🗣️ 명령</button>
+      <button class="tab" data-tab="procs">📋 Claude 목록 <span id="proc-count"></span></button>
+      <button class="tab" data-tab="settings">⚙️ 설정</button>
+      <button id="panel-close">✕</button>
+    </div>
+
+    <div class="tab-body active" data-tab="chat">
+      <div id="chat-log"><div class="empty">아무 얘기나 걸어보세요 🐾</div></div>
+      <div class="row">
+        <input type="text" id="chat-input" placeholder="오늘 하루 어땠어요? (Enter 전송)">
+        <button class="btn" id="chat-send">전송</button>
+      </div>
+      <div class="row">
+        <span class="hint" style="flex:1">대화 맥락이 유지됩니다</span>
+        <button class="btn ghost small" id="chat-reset">새 대화</button>
+      </div>
+    </div>
+
+    <div class="tab-body" data-tab="cmd">
+      <div class="row">
+        <label>작업 폴더</label>
+        <input type="text" id="cwd-input" placeholder="~">
+      </div>
+      <textarea id="prompt-input" placeholder="Claude에게 시킬 일을 입력하세요… (⌘+Enter 실행)"></textarea>
+      <div class="row">
+        <button class="btn" id="run-btn">▶ 실행</button>
+        <span class="hint">claude -p 로 백그라운드 실행되고 결과가 아래에 표시됩니다</span>
+      </div>
+      <div id="sessions"></div>
+    </div>
+
+    <div class="tab-body" data-tab="procs">
+      <div class="row">
+        <span class="hint" style="flex:1">이 PC에서 실행 중인 모든 Claude CLI 프로세스</span>
+        <button class="btn ghost small" id="refresh-procs">새로고침</button>
+      </div>
+      <div id="proc-list"><div class="empty">불러오는 중…</div></div>
+    </div>
+
+    <div class="tab-body" data-tab="settings">
+      <div class="row">
+        <button class="btn" id="change-image">🖼️ 펫 이미지 변경…</button>
+        <span class="hint">또는 이미지를 펫 위로 드래그&드롭</span>
+      </div>
+      <div class="row">
+        <label>배경 자동 제거</label>
+        <input type="checkbox" id="bg-remove" checked>
+        <span class="hint">단색 배경 사진을 넣으면 배경을 지워줍니다</span>
+      </div>
+      <div class="row">
+        <label>크기</label>
+        <input type="range" id="size-slider" min="72" max="256" value="128" style="flex:1">
+        <span id="size-label" class="hint">128px</span>
+      </div>
+      <div class="row">
+        <label>좌우 반전</label>
+        <input type="checkbox" id="flip-check">
+        <span class="hint">이미지가 왼쪽을 보고 있으면 체크</span>
+      </div>
+      <div class="sep"></div>
+      <div class="row">
+        <button class="btn danger" id="quit-btn">앱 종료</button>
+      </div>
+    </div>
+  </div>
+
+<script src="pet.js"></script>
+</body>
+</html>
