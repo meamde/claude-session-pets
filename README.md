@@ -29,7 +29,15 @@ npm start          # 또는 ./start.sh (백그라운드 실행 + 중복 방지)
 
 ### `.app`으로 설치 (독에서 실행)
 
-`electron-packager`로 `.app`을 만들어 `/Applications`에 설치할 수 있습니다. 전체 절차(아이콘 교체·ad-hoc 서명·다른 맥 배포)는 [`CLAUDE.md`](CLAUDE.md)의 **패키징** 섹션 참고. 앱은 `app.dock.hide()`를 호출하므로 실행 중 독에 아이콘이 보이지 않습니다(독 등록은 Finder에서 드래그).
+`build-app.sh` 하나로 빌드부터 설치까지 끝납니다:
+
+```bash
+./build-app.sh            # .app 빌드 → /Applications 설치 → 실행
+./build-app.sh --no-open  # 설치까지만 (실행은 안 함)
+./build-app.sh --build    # dist/에 빌드만 (설치 안 함)
+```
+
+내부적으로 `electron-packager` 빌드 → 아이콘 교체 → ad-hoc 재서명 → 구버전 휴지통 이동 → `/Applications` 설치를 자동으로 수행합니다. 전체 절차와 다른 맥 배포 방법은 [`CLAUDE.md`](CLAUDE.md)의 **패키징** 섹션 참고. 앱은 `app.dock.hide()`를 호출하므로 실행 중 독에 아이콘이 보이지 않습니다(독 등록은 Finder에서 드래그).
 
 ---
 

@@ -91,6 +91,9 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 
 사용자는 `/Applications/Claude Session Pets.app`으로 실행한다 (독에 등록). **코드 수정 후 반드시 재패키징**:
 
+**빠른 방법: `./build-app.sh`** — 아래 전 과정(빌드→아이콘 교체→ad-hoc 재서명→구버전 휴지통 이동→설치→실행)을
+자동화한 스크립트. 옵션: `--no-open`(설치까지만), `--build`(dist/에 빌드만). 아래 수동 절차는 스크립트가 하는 일의 원본이다:
+
 ```bash
 npx electron-packager . "Claude Session Pets" --platform=darwin --arch=arm64 --out=dist --overwrite \
   --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh"
