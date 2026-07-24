@@ -47,9 +47,11 @@
     0%,100% { transform: scaleY(1); }
     50%     { transform: scaleY(.94) scaleX(1.03); }
   }
+  /* 바닥(origin 50% 100%) 고정: translateY 금지(바닥이 위아래로 움직임) → 바닥 기준 scaleY 늘썩 + 좌우 갸우뚱.
+     scale를 먼저·rotate를 나중(rotate ... scaleY 순서)에 둬야 전단 왜곡이 안 생긴다(worky/sleepy와 동일 규칙). */
   @keyframes walkbob {
-    0%,100% { transform: translateY(0) rotate(-4deg); }
-    50%     { transform: translateY(-9px) rotate(4deg); }
+    0%,100% { transform: rotate(-4deg) scaleY(1) scaleX(1); }
+    50%     { transform: rotate(4deg) scaleY(1.06) scaleX(.95); }
   }
   @keyframes dragswing {
     0%,100% { transform: rotate(-10deg); }
@@ -160,9 +162,9 @@
   /* .sbody = 회전 레이어 (회전축 고정). .sbounce = 위치·스케일 레이어 (안쪽).
      회전을 바깥에 두고 바운스를 안쪽에 둬야 회전축(=.sbody origin)이 바운스로 안 움직이고 고정된다.
      (반대로 하면 축이 위아래로 움직여 회전이 이상해짐 — 오래 헤맨 원인) */
-  /* 회전축은 render()가 픽셀 무게중심(균형점 cx·cy)으로 매 프레임 설정(미러 시 1-cx). 아래 50% 50%는 이미지 로드 전 fallback.
-     박스 기하중심(50%)은 부리 등 한쪽으로 튀어나온 모양에서 몸 중심보다 옆으로 치우쳐 회전이 "한쪽 쏠림"으로 보였다 → 균형점 사용 */
-  .spet .sbody   { display: inline-block; line-height: 0; transform-origin: 50% 50%; }
+  /* 회전축 = 바닥중앙(50% 100%). render()가 this.cx/cy(=0.5,1)로 설정, 아래는 fallback.
+     바닥점을 축으로 둬야 "바닥 점 기준 갸우뚱". + sp-* 바운스에서 translateY를 없애야(아래) 바닥점이 위아래로 안 움직인다. 50%는 미러해도 불변 */
+  .spet .sbody   { display: inline-block; line-height: 0; transform-origin: 50% 100%; }
   .spet .sbounce { display: inline-block; line-height: 0; transform-origin: 50% 100%; }
   .spet .ssprite {
     display: block;
@@ -240,10 +242,10 @@
     0%,100% { box-shadow: 0 6px 22px rgba(0,0,0,.5), 0 0 0 5px rgba(217,119,87,.18); }
     50%     { box-shadow: 0 6px 26px rgba(0,0,0,.55), 0 0 0 9px rgba(217,119,87,.30); }
   }
-  /* 몸짓을 두 레이어로 분리한다:
-     · 회전(좌우 흔들)은 .sbody — origin이 발(render가 설정)이라 발 딛고 갸우뚱
-     · 위치/스케일(바운스·점프·뽀용)은 .swrap — 축과 무관하므로 회전을 망치지 않음
-     한 상태에서 둘 다 걸리면(walk) 자연스럽게 합성된다. */
+  /* 몸짓을 두 레이어로 분리하되, 둘 다 "바닥(50% 100%)"을 기준으로 둔다 → 바닥점이 절대 위아래로 안 움직임:
+     · 회전(좌우 갸우뚱)은 .sbody — origin 바닥중앙(render가 설정) → 바닥 딛고 위에서 기울기
+     · 스케일(늘썩)은 .sbounce — origin 바닥, scaleY만(translateY 금지) → 바닥 붙은 채 위로만 늘어남
+     둘 다 바닥 고정이라 walk에서 합성돼도 바닥점은 제자리. (done 점프만 예외적으로 translateY로 땅을 뜀) */
 
   /* ── 회전 레이어 (.sbody) ── */
   .spet.anim-walk .sbody { animation: sp-walkrot .5s ease-in-out infinite; }
@@ -256,20 +258,20 @@
   @keyframes sp-wait    { 0%,100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
   @keyframes sp-drag    { 0%,100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }
 
-  /* ── 위치·스케일 레이어 (.sbounce, 안쪽) — 회전축을 안 건드림 ── */
-  .spet.anim-idle .sbounce { animation: sp-idle 1.7s ease-in-out infinite; }   /* 뽀용뽀용 */
-  .spet.anim-walk .sbounce { animation: sp-bounce .5s ease-in-out infinite; }  /* 걷기 바운스 */
-  .spet.anim-work .sbounce { animation: sp-work .6s ease-in-out infinite; }    /* 작업 중 들썩 */
+  /* ── 스케일 레이어 (.sbounce, 안쪽) — 바닥(origin 50% 100%) 기준 늘었다 줄었다 ──
+     ★ translateY(위아래 이동)는 금지: 바닥점을 위아래로 움직여 "바닥 기준 갸우뚱"을 깬다.
+       대신 바닥 고정 scaleY(위로만 늘고 바닥은 붙어있음)로 생동감을 준다. */
+  .spet.anim-idle .sbounce { animation: sp-idle 1.7s ease-in-out infinite; }   /* 숨쉬듯 늘썩 */
+  .spet.anim-walk .sbounce { animation: sp-bounce .5s ease-in-out infinite; }  /* 걷기 늘썩 */
+  .spet.anim-work .sbounce { animation: sp-work .6s ease-in-out infinite; }    /* 작업 중 늘썩 */
   .spet.anim-done .sbounce { animation: sp-jump 1.6s cubic-bezier(.28,.84,.42,1) infinite; }
   .spet.anim-fall .sbounce { animation: none; transform: scaleY(1.15) scaleX(.9); }
-  @keyframes sp-idle   { 0%,100% { transform: translateY(0) scaleY(1) scaleX(1); }
-                         50%     { transform: translateY(-4px) scaleY(1.05) scaleX(.96); } }
-  @keyframes sp-bounce { 0%,100% { transform: translateY(0); }
-                         50%     { transform: translateY(-8px); } }
-  /* work는 .sbody 회전(sp-workrot)이 있으므로 .swrap엔 비균등 scale 금지 → translate만
-     (부모 비균등 scale + 자식 rotate = 전단 왜곡으로 회전축이 우하단으로 틀어짐) */
-  @keyframes sp-work   { 0%,100% { transform: translateY(0); }
-                         50%     { transform: translateY(-3px); } }
+  @keyframes sp-idle   { 0%,100% { transform: scaleY(1) scaleX(1); }
+                         50%     { transform: scaleY(1.05) scaleX(.97); } }
+  @keyframes sp-bounce { 0%,100% { transform: scaleY(1) scaleX(1); }
+                         50%     { transform: scaleY(1.07) scaleX(.95); } }
+  @keyframes sp-work   { 0%,100% { transform: scaleY(1) scaleX(1); }
+                         50%     { transform: scaleY(1.04) scaleX(.98); } }
   @keyframes sp-jump {
     0%   { transform: translateY(0); }
     12%  { transform: translateY(-30px); }

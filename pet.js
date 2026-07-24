@@ -285,7 +285,7 @@ const SLABEL_H = 20;
 const SPET_SPEED = 1.2;
 
 // 기본 세션펫 캐릭터: 오른쪽을 보는 작은 생물 (클로드 오렌지 + 노란 부리).
-// viewBox 120 기준으로 만들었고, 회전 피봇(SPET_PIVOT 30% 89%)도 이 캐릭터 무게중심에 맞춰져 있다.
+// 회전축은 render()/processImage가 "발"(바닥 밴드 가로중심, 세로는 바닥)로 자동 계산 — 어떤 캐릭터/커스텀 이미지든 발 딛고 갸웃.
 let SPET_ICON = null;
 function defaultSpetIcon() {
   const svg =
@@ -329,7 +329,7 @@ class SessionPet {
     this.working = false;          // 작업 중이면 클릭/드래그해도 말풍선 유지
     this.workTask = null;          // 현재 작업 내용 한 줄 요약 (훅이 제공, 없으면 null)
     this.workTaskKind = null;      // 'prompt'(사용자 프롬프트) | 'tool'(진행 중 작업) | null
-    this.cx = 0.5; this.cy = 0.5;  // 픽셀 무게중심(균형점, 이미지 0~1). 회전축 — processImage가 계산
+    this.cx = 0.5; this.cy = 1;  // 회전축(이미지 0~1). 바닥중앙 고정 = 바닥점 기준 갸우뚱. render()가 사용
 
     const el = document.createElement('div');
     el.className = 'spet interactive anim-idle';
@@ -615,9 +615,8 @@ class SessionPet {
     // 반전해도 회전 각도가 뒤집히지 않는다. dir(진행 방향) XOR flip(사용자 설정).
     const facing = (this.dir === 1) !== this.flip ? 1 : -1;
     this.spriteEl.style.transform = `scaleX(${facing})`;
-    // 회전축 = 픽셀 무게중심(균형점, cx·cy). 제자리에서 좌우로 갸웃(메트로놈).
-    // 박스 기하중심(50%)은 부리처럼 튀어나온 쪽으로 치우쳐 회전이 한쪽으로 쏠려 보인다 → 균형점 사용.
-    // 스프라이트 미러(facing===-1) 시 균형점 X도 반대편(1-cx)으로.
+    // 회전축 = 바닥중앙(cx=0.5, cy=1). 바닥점 고정, 위에서 좌우로 갸우뚱(역진자).
+    // cx=0.5라 미러(facing===-1)해도 1-cx=0.5로 불변 → 방향 바꿔도 축이 안 튄다.
     const ox = facing === -1 ? (1 - this.cx) : this.cx;
     this.bodyEl.style.transformOrigin = (ox * 100).toFixed(2) + '% ' + (this.cy * 100).toFixed(2) + '%';
   }
@@ -1057,8 +1056,8 @@ function processImage(dataUrl) {
 
       cx.putImageData(im, 0, 0);
 
-      // 투명 여백 트림 + 픽셀 무게중심(균형점) 계산
-      let minX = w, minY = h, maxX = -1, maxY = -1, sumX = 0, sumY = 0, n = 0;
+      // 투명 여백 트림 (회전축은 하단중앙 고정이라 무게중심 계산은 불필요)
+      let minX = w, minY = h, maxX = -1, maxY = -1;
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++)
           if (d[(y * w + x) * 4 + 3] > 8) {
@@ -1066,21 +1065,20 @@ function processImage(dataUrl) {
             if (x > maxX) maxX = x;
             if (y < minY) minY = y;
             if (y > maxY) maxY = y;
-            sumX += x; sumY += y; n++;
           }
       if (maxX < 0) { resolve({ url: dataUrl, cx: 0.5, cy: 0.5 }); return; }
       const tw = maxX - minX + 1, th = maxY - minY + 1;
       const out = document.createElement('canvas');
       out.width = tw; out.height = th;
       out.getContext('2d').drawImage(cv, minX, minY, tw, th, 0, 0, tw, th);
-      // 회전축은 이 균형점(cx,cy). 박스 기하중심(50%)은 부리처럼 한쪽으로 튀어나온 모양에서
-      // 실제 몸 중심보다 옆으로 치우쳐 회전이 "한쪽으로 쏠려" 보였다 (오래 헤맨 원인).
-      const cx0 = (sumX / n - minX) / (tw - 1 || 1);
-      const cy0 = (sumY / n - minY) / (th - 1 || 1);
-      resolve({ url: out.toDataURL('image/png'), cx: cx0, cy: cy0 });
-     } catch { resolve({ url: dataUrl, cx: 0.5, cy: 0.5 }); } // 예외 시 원본으로 폴백(영구 pending 방지)
+      // 회전축 = 바닥중앙(50% 100%). "바닥에 점 찍고 그 점 기준으로 갸우뚱" = 바닥점 고정, 위에서 좌우로 기울기(역진자).
+      // cx=0.5라 미러(scaleX)해도 축이 불변(좌우 안 튐). cy=1이라 바닥이 축.
+      // ★ 단, 이것만으론 부족: 애니메이션의 translateY(바운스)가 캐릭터를 위아래로 들어올려 "바닥점이 위아래로 움직임".
+      //   그래서 pet.html의 sp-* keyframe에서 translateY를 제거하고 바닥 기준 scaleY로 바꿨다(바닥 고정).
+      resolve({ url: out.toDataURL('image/png'), cx: 0.5, cy: 1 });
+     } catch { resolve({ url: dataUrl, cx: 0.5, cy: 1 }); } // 예외 시 원본으로 폴백(영구 pending 방지)
     };
-    img.onerror = () => resolve({ url: dataUrl, cx: 0.5, cy: 0.5 });
+    img.onerror = () => resolve({ url: dataUrl, cx: 0.5, cy: 1 });
     img.src = dataUrl;
   });
 }
