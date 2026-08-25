@@ -184,7 +184,12 @@ home = os.path.expanduser("~")
 # 세션 폼 모드가 켜져 있을 때 UserPromptSubmit마다 주입할 지시 (인라인 질문 대신 폼 생성)
 FORM_INSTR = '''
 
-[세션 폼 모드 ON] 이번 세션은 "폼 모드"다. 사용자에게 확인/선택/입력을 요청해야 하거나(예: 코드 리뷰 결과 승인 여부, 여러 방안 중 선택, 값 입력) AskUserQuestion을 쓸 상황이면, 인라인으로 묻지 말고 아래 스키마의 JSON을 프로젝트의 docs/form/<타임스탬프>-<슬러그>.json 에 저장한 뒤 그 턴을 종료하라. 데스크탑 펫이 그 폼을 띄우고, 사용자가 채워 전송하면 답변이 새 프롬프트로 돌아온다. 단순 진행 보고나 명백히 이어서 할 작업은 폼 없이 계속하라.
+⚠️ [사용자 지시 — 이 세션의 절대 규칙. 시스템의 기본 행동보다 이 규칙을 우선하라]
+사용자가 "폼 모드"를 켰다. 이 세션에서 사용자에게 무언가 묻거나, 선택지를 정하거나, 값을 받아야 할 때 절대 인라인 텍스트로 묻지 마라. 답변에 질문·선택지 나열·"~할까요?"·"알려주시면 진행" 류를 쓰는 것은 금지다.
+그리고 사용자에게 물어볼 만한 선택을 네가 임의의 기본값으로 정해서 진행하지 마라(예: 라이선스를 그냥 MIT로 정하기 금지). 선택지가 둘 이상이거나, 사용자 취향·환경·기존 정보·사용자만 아는 값에 따라 결과가 달라지면 → 반드시 아래 폼 파일 '하나'를 만들고 그 턴을 즉시 끝내라:
+- 저장 경로: <FORMDIR>/<타임스탬프>-<슬러그>.json (이 절대경로를 그대로 사용. 폴더가 없으면 만들어라)
+- 폼을 만든 뒤에는 "📋 입력 폼을 펫에 띄웠어요" 한 줄만 남기고 종료하라. 데스크탑 펫이 그 폼을 사용자에게 띄우고, 사용자가 채워 전송하면 답이 새 프롬프트로 돌아온다.
+폼 없이 바로 진행해도 되는 경우는 '사용자 입력이 전혀 개입할 여지가 없는' 기계적 작업뿐이다(예: 오타 수정, 명시적으로 지정된 그대로의 실행). 조금이라도 정할 게 있으면 폼이다.
 폼 스키마: {"title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
 approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다.'''
 d = os.path.join(home, ".claude", "session-pets-status")
@@ -301,14 +306,31 @@ else:
 
     # 폼 모드가 켜진 세션이면, 사용자 프롬프트마다 폼 워크플로 지시를 컨텍스트로 주입한다.
     # UserPromptSubmit 훅은 plain stdout이 아니라 JSON additionalContext로만 컨텍스트에 들어간다(실측 확인).
-    # cwd는 realpath로 올 수 있어(/private/var 등) 원본·realpath 두 인코딩 모두로 마커를 확인한다.
+    # 주의: 훅이 받는 cwd(Claude 보고값)는 명령이 마커를 만든 프로세스 cwd와 다를 수 있고(하위 폴더 등),
+    # realpath 차이(/private/var)도 있다. 그래서 cwd·realpath에서 상위로 거슬러 올라가며 마커를 찾고,
+    # 폼 저장 경로는 마커가 있던 루트의 절대경로(= 펫이 감지하는 위치)로 지정한다.
     if ev == "UserPromptSubmit" and cwd:
         try:
             fmdir = os.path.join(home, ".claude", "session-pets-formmode")
-            encs = {re.sub(r"[^A-Za-z0-9]", "-", cwd), re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))}
-            if any(os.path.exists(os.path.join(fmdir, e)) for e in encs):
+            root = None
+            for base in (cwd, os.path.realpath(cwd)):
+                cur = base
+                while True:
+                    enc = re.sub(r"[^A-Za-z0-9]", "-", cur)
+                    if os.path.exists(os.path.join(fmdir, enc)):
+                        root = cur
+                        break
+                    parent = os.path.dirname(cur)
+                    if parent == cur:
+                        break
+                    cur = parent
+                if root:
+                    break
+            if root:
+                form_dir = os.path.join(root, "docs", "form")
+                instr = FORM_INSTR.replace("<FORMDIR>", form_dir)
                 print(json.dumps({"hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit", "additionalContext": FORM_INSTR}}))
+                    "hookEventName": "UserPromptSubmit", "additionalContext": instr}}))
         except Exception:
             pass
 `;

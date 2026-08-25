@@ -118,7 +118,13 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 
 ### ⚠️ Gotcha (실측으로 확인한 것들)
 - **UserPromptSubmit 훅은 plain stdout이 컨텍스트에 안 들어간다.** 반드시 **JSON `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"..."}}`** 형식으로 출력해야 주입됨. (카나리 테스트로 확인: plain=실패, JSON=성공)
-- **cwd realpath 문제**: 클로드가 훅에 넘기는 `cwd`는 realpath일 수 있다(`/tmp`→`/private/var/...`, 심링크). 마커 생성은 `pwd -P`, 훅 확인은 **원본·realpath 두 인코딩 모두** 체크.
+- **cwd realpath 문제**: 클로드가 훅에 넘기는 `cwd`는 realpath일 수 있다(`/tmp`→`/private/var/...`, 심링크).
+- **⭐ 하위 폴더 문제(실측)**: `/session-form on`의 bash `pwd -P`는 **프로세스 cwd**(=펫이 lsof로 보는 launch 폴더)에서 마커를 만드는데,
+  **훅이 받는 `cwd`는 Claude가 보고하는 값**이라 다를 수 있다(예: 프로세스는 `.../myproj`인데 훅 cwd는 `.../myproj/specs`).
+  그래서 마커·훅 cwd가 안 맞아 "폼을 아예 안 만듦"이 된다. → **훅은 cwd·realpath에서 상위로 거슬러 올라가며 마커를 찾고(ancestor walk),
+  폼 저장 경로는 마커가 있던 루트의 절대경로 `<root>/docs/form/`로 주입**(= 펫 감지 위치와 일치). 하위 폴더에서 작업해도 동작.
+- **⭐ 순응도(실측)**: `additionalContext` 주입은 잘 닿지만 **지시 순응이 약하다** — 약하게 쓰면 클로드가 인라인으로 묻거나 기본값을 임의로 골라버린다.
+  **"사용자 지시(시스템 기본보다 우선)", "인라인 질문 금지", "기본값 임의선택 금지(예: 라이선스 MIT로 자동 결정 금지)"** 를 강하게 명시해야 폼을 만든다.
 - **`claude -p`(헤드리스)에서도 UserPromptSubmit 훅은 발화**한다(확인함). 그래서 resume 실행도 훅을 탄다.
 - 검증: 폼 모드 ON + "사용자만 아는 정보가 필요한" 프롬프트로 `claude -p` → `docs/form/*.json`이 스키마대로 생성되는지 확인. 렌더는 임시로 폼 창을 `capturePage`.
 - `docs/form/`은 런타임 산출물이라 `.gitignore` 처리됨.
