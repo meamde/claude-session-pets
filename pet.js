@@ -330,6 +330,7 @@ class SessionPet {
     this.workTask = null;          // 현재 작업 내용 한 줄 요약 (훅이 제공, 없으면 null)
     this.workTaskKind = null;      // 'prompt'(사용자 프롬프트) | 'tool'(진행 중 작업) | null
     this.cx = 0.5; this.cy = 1;  // 회전축(이미지 0~1). 바닥중앙 고정 = 바닥점 기준 갸우뚱. render()가 사용
+    this.pendingForm = null;       // docs/form에 대기 중인 입력 폼 {id,title} (있으면 클릭 시 폼 열림)
 
     const el = document.createElement('div');
     el.className = 'spet interactive anim-idle';
@@ -502,10 +503,32 @@ class SessionPet {
   // 현재 모드에 맞는 상시 말풍선을 다시 보여준다 (임시 말풍선이 끝난 뒤 등)
   restoreBubble() {
     if (this.state === 'bye') return;
-    if (this.sticky === 'done') this.showBubble('🎉 작업 완료!', true);
+    if (this.sticky === 'form') this.showBubble('📋 입력이 필요해요! (클릭)', true);
+    else if (this.sticky === 'done') this.showBubble('🎉 작업 완료!', true);
     else if (this.sticky === 'wait') this.showBubble('🙋 입력 필요!', true);
     else if (this.working) this.showBubble(this.workBubbleText());
     else this.hideBubble();
+  }
+
+  // docs/form에 새 폼이 있으면 '입력 필요' 말풍선을 띄우고, 없어지면 치운다
+  async checkForms() {
+    if (this.state === 'bye') return;
+    if (!this.key || this.key.startsWith('pid:')) return; // cwd 없는 세션은 폼 경로 없음
+    let forms = [];
+    try { forms = await window.pet.listForms(this.key); } catch { return; }
+    const f = forms && forms[0];
+    if (f) {
+      if (!this.pendingForm || this.pendingForm.id !== f.id) {
+        this.pendingForm = f;
+        this.sticky = 'form';
+        this.working = false;
+        if (!this.inAir()) this.enter('wait', 0);
+        this.showBubble('📋 입력이 필요해요! (클릭)', true);
+      }
+    } else if (this.pendingForm) {
+      this.pendingForm = null;
+      if (this.sticky === 'form') this.goIdle();
+    }
   }
 
   // 프롬프트(사용자가 넘긴 것)는 '>_', 진행 중 작업은 '🏃'로 구분 표시
@@ -549,6 +572,10 @@ class SessionPet {
   }
   onClick() {
     if (this.state === 'bye') return;
+    if (this.pendingForm) {    // 대기 중인 폼이 있으면 폼 창을 연다
+      window.pet.openForm(this.key, this.pendingForm.id);
+      return;
+    }
     if (this.working) return;  // 작업 중 말풍선은 클릭해도 유지
     if (this.sticky) {         // 완료/입력필요 말풍선 확인 → 치우고 평소대로
       this.goIdle();
@@ -851,6 +878,8 @@ function openSendRow(wrap, p, name) {
 
 $('#refresh-procs').addEventListener('click', refreshProcs);
 setInterval(refreshProcs, 1000);
+// docs/form 폼 감지 (2초 주기) — 각 세션펫이 자기 cwd의 대기 폼을 확인
+setInterval(() => { for (const sp of sessionPets.values()) sp.checkForms(); }, 2000);
 
 // ── 명령 실행 (claude -p) ────────────────────────────────────
 const sessions = new Map(); // id -> { el, pre, prompt, done }

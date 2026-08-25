@@ -8,7 +8,8 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 - `main.js` — Electron 메인. 프로세스 감시(ps/lsof), 상태 훅 설치/업그레이드, 트랜스크립트 판독, tty 명령 주입, `claude -p` 실행
 - `pet.js` — 렌더러. 메인펫/세션펫 상태머신, 말풍선, 패널 UI, 이미지 배경제거
 - `pet.html` — 마크업 + 전체 CSS (별도 CSS 파일 없음)
-- `preload.js` — IPC 브리지
+- `preload.js` — IPC 브리지 (펫 렌더러용)
+- `form-preload.js` — 세션 폼 창(BrowserWindow) 전용 IPC 브리지 (`window.sessionForm.submit/cancel/onOutput/onDone`)
 - `start.sh` — 개발 실행용 (`npx electron .` 백그라운드)
 - `build/icon.icns` — 앱 아이콘 (어른새 SVG를 스쿼클 배경에 얹어 렌더 → icns)
 
@@ -88,6 +89,39 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 - **우클릭 이미지 설정 메뉴(`showMenu`)**: 세션펫 우클릭 시 컨텍스트 메뉴 (`.spet-menu`, body 직속, 화면당 1개).
   항목: 창 앞으로 가져오기(기존 우클릭 동작 흡수) / 이미지 변경… / 좌우 반전(토글) / 기본 모습으로(`deleteSessionImage`+CLAUDE_ICON 복귀).
   바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. 더블클릭(이미지 변경)·드롭(이미지 지정)은 그대로 유지
+
+## 세션 폼 (docs/form) — 입력 필요 항목을 펫이 폼으로 띄우고, 답을 세션에 되돌림
+
+`/session-form on` 한 번 치면 그 세션은 "폼 모드"가 된다. 이후 클로드가 사용자 확인/선택/입력이 필요할 때(리뷰 결과 승인, 방안 선택 등)
+인라인으로 묻지 않고 **`<cwd>/docs/form/<타임스탬프>-<슬러그>.json`** 에 폼 스펙을 쓰고 턴을 종료한다. 앱이 이를 감지해
+해당 **세션펫에 📋 말풍선** → 클릭하면 **폼 창** → 채워서 [전송]하면 **`claude -p -r <session_id>`로 그 세션을 헤드리스로 이어간다**.
+(사용자 터미널이 Warp라 tty 주입이 안 돼서 **헤드리스 resume 방식** 채택. iTerm2/Terminal의 `send-to-tty`와는 별개.)
+
+### 데이터 흐름 / 조각
+- **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.
+  `enc` = 비영숫자→`-`. 명령은 **`pwd -P`**(realpath)로 인코딩(아래 gotcha 참조).
+- **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입.
+- **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(cwd)` → `<cwd>/docs/form/*.json`(미처리) 목록. 있으면 `pendingForm` + 📋 sticky 말풍선.
+- **표시/제출**: 클릭 → `open-form` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 `docs/form/<id>.html`로 저장 후 폼 창 로드.
+  [전송] → `submit-form` IPC가 `formatAnswers`로 프롬프트를 만들고 `claude -p -r <sid>` 실행, 출력 스트리밍, 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
+- 이어갈 세션은 `listSessionsForCwd(cwd)[0]`(mtime 최신) 사용.
+
+### 폼 JSON 스키마
+```json
+{ "title": "...", "intro": "...",
+  "items": [ { "id": "kebab-id", "kind": "issue|question", "heading": "...", "detail": "...",
+    "proposal": "제안(선택)",
+    "input": { "type": "approve|text|textarea|select|radio|checkbox",
+               "label": "...", "options": ["..."], "placeholder": "...", "default": "..." } } ] }
+```
+`approve`는 승인/거절/수정요청 라디오로 렌더. `options`는 select/radio/checkbox에만.
+
+### ⚠️ Gotcha (실측으로 확인한 것들)
+- **UserPromptSubmit 훅은 plain stdout이 컨텍스트에 안 들어간다.** 반드시 **JSON `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"..."}}`** 형식으로 출력해야 주입됨. (카나리 테스트로 확인: plain=실패, JSON=성공)
+- **cwd realpath 문제**: 클로드가 훅에 넘기는 `cwd`는 realpath일 수 있다(`/tmp`→`/private/var/...`, 심링크). 마커 생성은 `pwd -P`, 훅 확인은 **원본·realpath 두 인코딩 모두** 체크.
+- **`claude -p`(헤드리스)에서도 UserPromptSubmit 훅은 발화**한다(확인함). 그래서 resume 실행도 훅을 탄다.
+- 검증: 폼 모드 ON + "사용자만 아는 정보가 필요한" 프롬프트로 `claude -p` → `docs/form/*.json`이 스키마대로 생성되는지 확인. 렌더는 임시로 폼 창을 `capturePage`.
+- `docs/form/`은 런타임 산출물이라 `.gitignore` 처리됨.
 
 ## 패키징 (.app)
 

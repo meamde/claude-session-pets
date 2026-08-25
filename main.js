@@ -162,6 +162,8 @@ const HOOK_SCRIPT = () => path.join(HOOK_DIR(), 'session-pets-hook.py');
 const STATUS_DIR = () => path.join(HOOK_DIR(), 'session-pets-status');
 const SETTINGS_PATH = () => path.join(HOOK_DIR(), 'settings.json');
 const HOOK_MARKER = 'session-pets-hook.py';
+const COMMANDS_DIR = () => path.join(HOOK_DIR(), 'commands');       // ~/.claude/commands
+const FORM_COMMAND_PATH = () => path.join(COMMANDS_DIR(), 'session-form.md');
 // 이벤트 → 기록할 상태
 const HOOK_EVENTS = {
   UserPromptSubmit: 'working',
@@ -175,9 +177,16 @@ const HOOK_EVENTS = {
 
 const HELPER_SRC = `#!/usr/bin/env python3
 # Claude Session Pets 상태 훅: 세션별 작업 상태(+현재 작업 내용)를 데스크탑 펫이 읽도록 기록한다.
-import json, sys, os, time
+import json, sys, os, time, re
 state = sys.argv[1] if len(sys.argv) > 1 else ""
 home = os.path.expanduser("~")
+
+# 세션 폼 모드가 켜져 있을 때 UserPromptSubmit마다 주입할 지시 (인라인 질문 대신 폼 생성)
+FORM_INSTR = '''
+
+[세션 폼 모드 ON] 이번 세션은 "폼 모드"다. 사용자에게 확인/선택/입력을 요청해야 하거나(예: 코드 리뷰 결과 승인 여부, 여러 방안 중 선택, 값 입력) AskUserQuestion을 쓸 상황이면, 인라인으로 묻지 말고 아래 스키마의 JSON을 프로젝트의 docs/form/<타임스탬프>-<슬러그>.json 에 저장한 뒤 그 턴을 종료하라. 데스크탑 펫이 그 폼을 띄우고, 사용자가 채워 전송하면 답변이 새 프롬프트로 돌아온다. 단순 진행 보고나 명백히 이어서 할 작업은 폼 없이 계속하라.
+폼 스키마: {"title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
+approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다.'''
 d = os.path.join(home, ".claude", "session-pets-status")
 try:
     os.makedirs(d, exist_ok=True)
@@ -289,6 +298,35 @@ else:
             os.remove(tmp)
         except Exception:
             pass
+
+    # 폼 모드가 켜진 세션이면, 사용자 프롬프트마다 폼 워크플로 지시를 컨텍스트로 주입한다.
+    # UserPromptSubmit 훅은 plain stdout이 아니라 JSON additionalContext로만 컨텍스트에 들어간다(실측 확인).
+    # cwd는 realpath로 올 수 있어(/private/var 등) 원본·realpath 두 인코딩 모두로 마커를 확인한다.
+    if ev == "UserPromptSubmit" and cwd:
+        try:
+            fmdir = os.path.join(home, ".claude", "session-pets-formmode")
+            encs = {re.sub(r"[^A-Za-z0-9]", "-", cwd), re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))}
+            if any(os.path.exists(os.path.join(fmdir, e)) for e in encs):
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit", "additionalContext": FORM_INSTR}}))
+        except Exception:
+            pass
+`;
+
+// /session-form 슬래시 명령: 폼 모드 마커를 토글한다. 마커가 있으면 위 UserPromptSubmit 훅이 폼 워크플로를 주입.
+// ($ARGUMENTS만 Claude Code가 치환하고 $HOME/$PWD/$M 등은 bash로 전달됨. 백틱/`${}` 없음 — JS 템플릿 안전)
+const FORM_COMMAND_SRC = `---
+description: 세션 폼 모드 on/off — 켜면 입력이 필요할 때 데스크탑 펫이 입력 폼을 띄웁니다
+---
+세션 "폼 모드"를 토글한다. 아래 bash를 그대로 한 번 실행하고, 그 echo 출력 한 줄만 사용자에게 전한다. 다른 설명이나 작업은 하지 않는다.
+인자 (on=켜기 / off=끄기 / 없으면 현재 상태를 토글): $ARGUMENTS
+
+    DIR="$HOME/.claude/session-pets-formmode"; mkdir -p "$DIR"
+    ENC=$(printf '%s' "$(pwd -P)" | sed 's/[^A-Za-z0-9]/-/g'); M="$DIR/$ENC"; ARG="$ARGUMENTS"
+    if [ "$ARG" = on ]; then : > "$M"; echo "🟢 세션 폼 모드 ON — 입력이 필요할 때 펫이 폼을 띄웁니다";
+    elif [ "$ARG" = off ]; then rm -f "$M"; echo "⚪️ 세션 폼 모드 OFF";
+    elif [ -e "$M" ]; then rm -f "$M"; echo "⚪️ 세션 폼 모드 OFF";
+    else : > "$M"; echo "🟢 세션 폼 모드 ON — 입력이 필요할 때 펫이 폼을 띄웁니다"; fi
 `;
 
 // 이전 버전 훅이 설치돼 있으면 (사용자 동의는 이미 받았으므로) 조용히 최신으로 갱신
@@ -316,6 +354,11 @@ function installHooks() {
   fs.mkdirSync(HOOK_DIR(), { recursive: true });
   fs.writeFileSync(HOOK_SCRIPT(), HELPER_SRC, { mode: 0o755 });
   fs.mkdirSync(STATUS_DIR(), { recursive: true });
+  // /session-form 슬래시 명령 설치 (폼 모드 토글)
+  try {
+    fs.mkdirSync(COMMANDS_DIR(), { recursive: true });
+    fs.writeFileSync(FORM_COMMAND_PATH(), FORM_COMMAND_SRC);
+  } catch {}
 
   // 기존 settings.json은 절대 파싱 실패를 삼키고 덮어쓰지 않는다.
   // (trailing comma 하나로도 permissions/env 등 전체 설정이 소실될 수 있으므로)
@@ -368,6 +411,7 @@ function uninstallHooks() {
   const tmp = SETTINGS_PATH() + '.session-pets-tmp';
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
   fs.renameSync(tmp, SETTINGS_PATH());
+  try { fs.unlinkSync(FORM_COMMAND_PATH()); } catch {} // /session-form 명령도 제거
 }
 
 function readHookStatus(sessionId) {
@@ -873,6 +917,213 @@ ipcMain.handle('run-claude', (e, { id, prompt, cwd }) => {
     send('run-done', { id, code: -1, error: String(err.message || err) });
   });
   return { ok: true, pid: child.pid, cwd: dir };
+});
+
+// ── 세션 폼 (docs/form): 이슈/질문 폼 → 채워서 전송 → 세션 헤드리스 이어가기 ──
+function formDir(cwd) { return path.join(cwd, 'docs', 'form'); }
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// cwd의 미처리 폼 목록 (done 폴더로 안 옮겨진 .json)
+ipcMain.handle('list-forms', (_e, cwd) => {
+  try {
+    const dir = formDir(cwd);
+    return fs.readdirSync(dir)
+      .filter(f => f.endsWith('.json') && !f.startsWith('.'))
+      .map(f => {
+        const id = f.replace(/\.json$/, '');
+        let title = id;
+        try { title = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).title || id; } catch {}
+        let mtimeMs = 0;
+        try { mtimeMs = fs.statSync(path.join(dir, f)).mtimeMs; } catch {}
+        return { id, title, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  } catch { return []; }
+});
+
+// 폼 JSON → 앱이 일관된 HTML로 렌더 (내용은 앱이 escape → 안전)
+function renderFormHtml(form, ctx) {
+  const items = Array.isArray(form.items) ? form.items : [];
+  const field = (it) => {
+    const inp = it.input || {};
+    const id = 'f_' + escHtml(it.id);
+    const type = inp.type || 'textarea';
+    const opts = Array.isArray(inp.options) ? inp.options : [];
+    if (type === 'text')
+      return `<input class="fin" id="${id}" data-t="text" type="text" placeholder="${escHtml(inp.placeholder || '')}" value="${escHtml(inp.default || '')}">`;
+    if (type === 'textarea')
+      return `<textarea class="fin" id="${id}" data-t="textarea" rows="3" placeholder="${escHtml(inp.placeholder || '')}">${escHtml(inp.default || '')}</textarea>`;
+    if (type === 'select')
+      return `<select class="fin" id="${id}" data-t="select">` +
+        opts.map(o => `<option${o === inp.default ? ' selected' : ''}>${escHtml(o)}</option>`).join('') + `</select>`;
+    if (type === 'radio' || type === 'approve') {
+      const choices = type === 'approve' ? ['승인', '거절', '수정 요청'] : opts;
+      return `<div class="frad" id="${id}" data-t="radio">` + choices.map((o, i) =>
+        `<label class="rad"><input type="radio" name="${id}" value="${escHtml(o)}"${(o === inp.default || (i === 0 && inp.default == null)) ? ' checked' : ''}> ${escHtml(o)}</label>`).join('') + `</div>`;
+    }
+    if (type === 'checkbox')
+      return `<div class="fchk" id="${id}" data-t="checkbox">` + opts.map(o =>
+        `<label class="chk"><input type="checkbox" value="${escHtml(o)}"> ${escHtml(o)}</label>`).join('') + `</div>`;
+    return `<textarea class="fin" id="${id}" data-t="textarea" rows="3"></textarea>`;
+  };
+  const cards = items.map(it => `
+    <section class="card" data-id="${escHtml(it.id)}">
+      <div class="kind ${it.kind === 'issue' ? 'k-issue' : 'k-q'}">${it.kind === 'issue' ? '수정 제안' : '질문'}</div>
+      <h2>${escHtml(it.heading || '')}</h2>
+      ${it.detail ? `<p class="detail">${escHtml(it.detail)}</p>` : ''}
+      ${it.proposal ? `<div class="proposal"><span>제안</span>${escHtml(it.proposal)}</div>` : ''}
+      ${it.input && it.input.label ? `<label class="flabel">${escHtml(it.input.label)}</label>` : ''}
+      ${field(it)}
+    </section>`).join('');
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>${escHtml(form.title || '세션 입력')}</title>
+<style>
+  :root{--bg:#1c1b1a;--panel:#262019;--panel2:#33291f;--ink:#f4efe9;--muted:#b6a99c;--accent:#d97757;--line:#4a3d31;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;line-height:1.55;font-size:14px}
+  header{padding:18px 22px 12px;position:sticky;top:0;background:linear-gradient(180deg,#1c1b1a,rgba(28,27,26,.92));border-bottom:1px solid var(--line);backdrop-filter:blur(4px)}
+  header h1{margin:0 0 4px;font-size:18px}
+  header p{margin:0;color:var(--muted);font-size:12.5px}
+  main{padding:16px 22px 120px;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kind{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:2px 9px;margin-bottom:8px}
+  .k-issue{background:rgba(217,119,87,.22);color:var(--accent)}
+  .k-q{background:rgba(120,160,220,.22);color:#8ab4e8}
+  .card h2{margin:0 0 6px;font-size:15px}
+  .detail{margin:0 0 8px;color:#ddd2c7;white-space:pre-wrap}
+  .proposal{background:var(--panel2);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;margin:0 0 10px;color:#ecdfd3;white-space:pre-wrap}
+  .proposal span{display:block;font-size:11px;font-weight:700;color:var(--accent);margin-bottom:3px}
+  .flabel{display:block;font-size:12px;color:var(--muted);margin:4px 0 5px}
+  .fin{width:100%;background:#1a1512;border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 10px;font:inherit;font-size:13px}
+  .fin:focus{outline:none;border-color:var(--accent)}
+  textarea.fin{resize:vertical}
+  .frad,.fchk{display:flex;flex-direction:column;gap:6px}
+  .rad,.chk{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+  input[type=radio],input[type=checkbox]{accent-color:var(--accent)}
+  footer{position:fixed;bottom:0;left:0;right:0;padding:12px 22px;background:linear-gradient(0deg,#1c1b1a,rgba(28,27,26,.9));border-top:1px solid var(--line);display:flex;gap:10px;align-items:center}
+  button{font:inherit;font-weight:700;border-radius:9px;padding:10px 18px;cursor:pointer;border:1px solid var(--line)}
+  #send{background:var(--accent);color:#1c1b1a;border-color:var(--accent);flex:1}
+  #send:disabled{opacity:.5;cursor:default}
+  #cancel{background:transparent;color:var(--muted)}
+  #progress{display:none;padding:12px 22px 100px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cfc3b6}
+  #progress.show{display:block}
+  .done{color:#7bbf6a;font-weight:700}
+</style></head>
+<body>
+  <header><h1>${escHtml(form.title || '세션 입력')}</h1><p>${escHtml(form.intro || '선택/입력 후 전송하면 이 세션이 이어서 작업합니다.')}</p></header>
+  <main id="form">${cards}</main>
+  <pre id="progress"></pre>
+  <footer>
+    <button id="cancel">닫기</button>
+    <button id="send">전송하고 작업 진행 →</button>
+  </footer>
+<script>
+  const CTX = window.__FORM_CTX__ || {};
+  function collect(){
+    const ans = {};
+    document.querySelectorAll('main .card').forEach(card => {
+      const iid = card.dataset.id;
+      const el = card.querySelector('[data-t]');
+      if (!el) return;
+      const t = el.dataset.t;
+      if (t === 'checkbox') ans[iid] = [...el.querySelectorAll('input:checked')].map(x=>x.value);
+      else if (t === 'radio') { const c = el.querySelector('input:checked'); ans[iid] = c ? c.value : null; }
+      else ans[iid] = el.value;
+    });
+    return ans;
+  }
+  const send = document.getElementById('send');
+  const prog = document.getElementById('progress');
+  send.addEventListener('click', async () => {
+    send.disabled = true; send.textContent = '전송 중…';
+    prog.classList.add('show'); prog.textContent = '세션을 이어서 실행 중…\\n';
+    const r = await window.sessionForm.submit({ cwd: CTX.cwd, id: CTX.id, answers: collect() });
+    if (!r || !r.ok) { prog.textContent += '\\n[오류] ' + ((r && r.error) || '전송 실패'); send.disabled = false; send.textContent = '다시 전송'; }
+  });
+  document.getElementById('cancel').addEventListener('click', () => window.sessionForm.cancel());
+  window.sessionForm.onOutput(d => { prog.classList.add('show'); prog.textContent += d.chunk; prog.scrollIntoView({block:'end'}); });
+  window.sessionForm.onDone(d => {
+    prog.textContent += '\\n\\n' + (d.code === 0 ? '✅ 작업을 세션에 전달했습니다. 이 창은 닫아도 됩니다.' : '⚠️ 종료 코드 ' + d.code + (d.error ? ' — ' + d.error : ''));
+    const p = document.createElement('div'); p.className='done';
+  });
+</script>
+</body></html>`;
+}
+
+let formWin = null;
+ipcMain.handle('open-form', (_e, { cwd, id }) => {
+  try {
+    const form = JSON.parse(fs.readFileSync(path.join(formDir(cwd), id + '.json'), 'utf8'));
+    const html = renderFormHtml(form, { cwd, id });
+    const htmlPath = path.join(formDir(cwd), id + '.html');
+    fs.writeFileSync(htmlPath, html); // 요구사항: 렌더된 HTML도 docs/form/에 남김
+    if (formWin && !formWin.isDestroyed()) formWin.close();
+    formWin = new BrowserWindow({
+      width: 580, height: 760, title: form.title || '세션 입력', show: true,
+      webPreferences: { preload: path.join(__dirname, 'form-preload.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    formWin.loadFile(htmlPath);
+    formWin.webContents.once('did-finish-load', () => {
+      formWin.webContents.executeJavaScript(`window.__FORM_CTX__=${JSON.stringify({ cwd, id })}`).catch(() => {});
+    });
+    return { ok: true };
+  } catch (err) { return { ok: false, error: String(err.message || err) }; }
+});
+
+ipcMain.handle('close-form', () => { if (formWin && !formWin.isDestroyed()) formWin.close(); return { ok: true }; });
+
+function formatAnswers(form, answers) {
+  const lines = [
+    '아래는 사용자가 docs/form 폼에 입력한 응답입니다. 이 결정에 따라 이어서 작업을 진행해주세요.',
+    '',
+  ];
+  for (const it of (form.items || [])) {
+    const a = answers[it.id];
+    const val = Array.isArray(a) ? (a.length ? a.join(', ') : '(선택 없음)') : (a == null || a === '' ? '(응답 없음)' : a);
+    lines.push(`■ ${it.heading || it.id}`);
+    if (it.proposal) lines.push(`  제안: ${it.proposal}`);
+    lines.push(`  → 사용자 응답: ${val}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function markFormDone(cwd, id, answers) {
+  try {
+    const dir = formDir(cwd);
+    const doneDir = path.join(dir, 'done');
+    fs.mkdirSync(doneDir, { recursive: true });
+    try { fs.writeFileSync(path.join(doneDir, id + '.answer.json'), JSON.stringify(answers, null, 2)); } catch {}
+    for (const ext of ['.json', '.html']) {
+      const src = path.join(dir, id + ext);
+      if (fs.existsSync(src)) { try { fs.renameSync(src, path.join(doneDir, id + ext)); } catch {} }
+    }
+  } catch {}
+}
+
+ipcMain.handle('submit-form', (_e, { cwd, id, answers }) => {
+  let form;
+  try { form = JSON.parse(fs.readFileSync(path.join(formDir(cwd), id + '.json'), 'utf8')); }
+  catch (err) { return { ok: false, error: '폼 파일을 읽지 못했어요: ' + String(err.message || err) }; }
+  const sessions = listSessionsForCwd(cwd);
+  if (!sessions.length) return { ok: false, error: '이 폴더에서 이어갈 세션(트랜스크립트)을 찾지 못했어요' };
+  const sid = sessions[0].sessionId;
+  const prompt = formatAnswers(form, answers);
+  let child;
+  try {
+    child = spawn(CLAUDE_BIN, ['-p', '-r', sid, '--output-format', 'text', '--', prompt],
+      { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) { return { ok: false, error: String(err.message || err) }; }
+  const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
+  child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
+  child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
+  child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code }); });
+  child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
+  return { ok: true, sessionId: sid };
 });
 
 // ── 잡담: 세션을 이어가는 대화 (claude -p --resume) ──────────
