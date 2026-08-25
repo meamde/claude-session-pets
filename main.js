@@ -1044,7 +1044,8 @@ function renderFormHtml(form, ctx) {
     <button id="send">전송하고 작업 진행 →</button>
   </footer>
 <script>
-  const CTX = window.__FORM_CTX__ || {};
+  const CTX = ${JSON.stringify(ctx || {}).replace(/</g, '\\u003c')};
+  const DKEY = 'sform-draft:' + (CTX.id || 'form');
   function collect(){
     const ans = {};
     document.querySelectorAll('main .card').forEach(card => {
@@ -1058,19 +1059,39 @@ function renderFormHtml(form, ctx) {
     });
     return ans;
   }
+  function restore(d){
+    document.querySelectorAll('main .card').forEach(card => {
+      const iid = card.dataset.id; if (!(iid in d)) return;
+      const el = card.querySelector('[data-t]'); if (!el) return;
+      const t = el.dataset.t, v = d[iid];
+      if (t === 'checkbox') el.querySelectorAll('input').forEach(x => { x.checked = Array.isArray(v) && v.includes(x.value); });
+      else if (t === 'radio') el.querySelectorAll('input').forEach(x => { x.checked = (x.value === v); });
+      else el.value = (v == null ? '' : v);
+    });
+  }
+  // 입력이 제출 실패·창 닫힘에도 안 날아가게: 초안을 localStorage에 저장/복원
+  try { const d = JSON.parse(localStorage.getItem(DKEY) || 'null'); if (d) restore(d); } catch (e) {}
+  document.addEventListener('input', () => { try { localStorage.setItem(DKEY, JSON.stringify(collect())); } catch (e) {} });
   const send = document.getElementById('send');
   const prog = document.getElementById('progress');
   send.addEventListener('click', async () => {
+    try { localStorage.setItem(DKEY, JSON.stringify(collect())); } catch (e) {}
     send.disabled = true; send.textContent = '전송 중…';
     prog.classList.add('show'); prog.textContent = '세션을 이어서 실행 중…\\n';
-    const r = await window.sessionForm.submit({ cwd: CTX.cwd, id: CTX.id, answers: collect() });
-    if (!r || !r.ok) { prog.textContent += '\\n[오류] ' + ((r && r.error) || '전송 실패'); send.disabled = false; send.textContent = '다시 전송'; }
+    let r; try { r = await window.sessionForm.submit({ cwd: CTX.cwd, id: CTX.id, answers: collect() }); }
+    catch (e) { r = { ok:false, error: String((e && e.message) || e) }; }
+    if (!r || !r.ok) {
+      prog.textContent += '\\n[오류] ' + ((r && r.error) || '전송 실패') + '\\n(입력은 저장돼 있어요. 다시 전송을 눌러도 됩니다.)';
+      send.disabled = false; send.textContent = '다시 전송';
+    }
   });
   document.getElementById('cancel').addEventListener('click', () => window.sessionForm.cancel());
   window.sessionForm.onOutput(d => { prog.classList.add('show'); prog.textContent += d.chunk; prog.scrollIntoView({block:'end'}); });
   window.sessionForm.onDone(d => {
-    prog.textContent += '\\n\\n' + (d.code === 0 ? '✅ 작업을 세션에 전달했습니다. 이 창은 닫아도 됩니다.' : '⚠️ 종료 코드 ' + d.code + (d.error ? ' — ' + d.error : ''));
-    const p = document.createElement('div'); p.className='done';
+    if (d.code === 0) { try { localStorage.removeItem(DKEY); } catch (e) {} }
+    prog.textContent += '\\n\\n' + (d.code === 0
+      ? '✅ 작업을 세션에 전달했습니다. 이 창은 닫아도 됩니다.'
+      : '⚠️ 종료 코드 ' + d.code + (d.error ? ' — ' + d.error : '') + '\\n(입력은 저장돼 있어요.)');
   });
 </script>
 </body></html>`;
@@ -1088,10 +1109,7 @@ ipcMain.handle('open-form', (_e, { cwd, id }) => {
       width: 580, height: 760, title: form.title || '세션 입력', show: true,
       webPreferences: { preload: path.join(__dirname, 'form-preload.js'), contextIsolation: true, nodeIntegration: false },
     });
-    formWin.loadFile(htmlPath);
-    formWin.webContents.once('did-finish-load', () => {
-      formWin.webContents.executeJavaScript(`window.__FORM_CTX__=${JSON.stringify({ cwd, id })}`).catch(() => {});
-    });
+    formWin.loadFile(htmlPath); // CTX(cwd·id)는 renderFormHtml이 HTML에 직접 박음(로드 전에 확정 → 예전 did-finish-load 주입 타이밍 버그 제거)
     return { ok: true };
   } catch (err) { return { ok: false, error: String(err.message || err) }; }
 });
