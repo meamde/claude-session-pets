@@ -331,6 +331,7 @@ class SessionPet {
     this.workTaskKind = null;      // 'prompt'(사용자 프롬프트) | 'tool'(진행 중 작업) | null
     this.cx = 0.5; this.cy = 1;  // 회전축(이미지 0~1). 바닥중앙 고정 = 바닥점 기준 갸우뚱. render()가 사용
     this.pendingForm = null;       // docs/form에 대기 중인 입력 폼 {id,title} (있으면 클릭 시 폼 열림)
+    this.sessionId = null;         // 이 펫의 세션 id (폼을 세션 단위로 매칭 — 남의 폼 가로채기 방지)
 
     const el = document.createElement('div');
     el.className = 'spet interactive anim-idle';
@@ -516,6 +517,9 @@ class SessionPet {
     if (!this.key || this.key.startsWith('pid:')) return; // cwd 없는 세션은 폼 경로 없음
     let forms = [];
     try { forms = await window.pet.listForms(this.key); } catch { return; }
+    // 폼에 sessionId가 박혀 있으면 '내 세션 폼'만 취한다(다른 세션이 같은 폴더의 폼을 가로채지 않게).
+    // sessionId 없는 폼(구버전)이나 내 세션 id를 아직 모를 땐 폴더 단위로 취한다(하위호환).
+    if (this.sessionId) forms = forms.filter(f => !f.sessionId || f.sessionId === this.sessionId);
     const f = forms && forms[0];
     if (f) {
       if (!this.pendingForm || this.pendingForm.id !== f.id) {
@@ -704,6 +708,7 @@ function detectEvents() {
       tracked.set(p.pid, t);
       if (!quiet) {
         const sp = new SessionPet(p.pid, name, p.cwd, p.tty);
+        sp.sessionId = p.sessionId || null;
         sessionPets.set(p.pid, sp);
         const st = sessionState(p, t, now);
         if (st === 'working') { t.mode = 'working'; t.task = p.hookTask || null; t.taskKind = p.hookTaskKind || null; sp.setWorking(t.task, t.taskKind); }
@@ -714,7 +719,7 @@ function detectEvents() {
     t.name = name; // cwd가 늦게 조회되는 경우 갱신
     t.quiet = t.quiet || quiet;
     const sp = sessionPets.get(p.pid);
-    if (sp) sp.setName(name);
+    if (sp) { sp.setName(name); if (p.sessionId) sp.sessionId = p.sessionId; }
 
     const st = sessionState(p, t, now);
     t.cpusec = p.cpusec;

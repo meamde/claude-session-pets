@@ -106,15 +106,17 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 ### 데이터 흐름 / 조각
 - **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.
   `enc` = 비영숫자→`-`. 명령은 **`pwd -P`**(realpath)로 인코딩(아래 gotcha 참조).
-- **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입.
-- **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(cwd)` → `<cwd>/docs/form/*.json`(미처리) 목록. 있으면 `pendingForm` + 📋 sticky 말풍선.
+- **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입. `<FORMDIR>`·`<SESSION_ID>`를 실제 값으로 치환.
+- **⭐ 세션 단위 라우팅(폴더 아님)**: 폼 JSON에 **`sessionId`**(훅이 값 제공 → 펫이 자기 세션 폼만 감지, 남의 폼 가로채기 방지)와 **`sessionName`**(Claude가 `/list-agents` 첫 줄에서 자기 이름 확인 → 배달 대상)을 박는다. **폼이 폴더 기준이면**, 한 세션이 다른 세션의 하위 폴더에서 작업할 때 폼이 엉뚱한 폴더에 생겨 그 폴더의 다른 세션 펫이 가로채고 배달도 그 세션으로 감(실측 버그: myorg 세션 폼이 myproj에 생겨 myproj-e4가 받음). session_id 태깅으로 해결.
+- **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(cwd)` → `<cwd>/docs/form/*.json`(미처리) 목록. **폼의 `sessionId`가 자기 것(`sp.sessionId`, `list-claude-procs`가 실어줌)과 같은 것만** 취함(sessionId 없는 구버전 폼은 폴더 단위 하위호환). 있으면 `pendingForm` + 📋 sticky 말풍선.
 - **표시/제출**: 클릭 → `open-form` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 `docs/form/<id>.html`로 저장 후 폼 창 로드.
-  [전송] → `submit-form` IPC가 `formatAnswers`로 프롬프트를 만들고, 위 크로스세션 relay로 살아있는 세션에 전달(없으면 헤드리스 폴백), 출력 스트리밍, 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
-- 이어갈 세션은 `listSessionsForCwd(cwd)[0]`(mtime 최신) 사용.
+  [전송] → `submit-form` IPC 라우팅 우선순위: ① 폼의 `sessionName` → 그 이름으로 크로스세션 relay(정확+터미널 표시) ② 폼의 `sessionId` → 헤드리스 `claude -p -r <sid>`(정확, 터미널 X) ③ 구버전 폼 → cwd로 `resolvePeerName` relay, 없으면 최신 트랜스크립트 헤드리스. 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
+- **SendMessage는 이름만 받고 session_id는 못 받는다**(도구 제약). 그래서 정확 배달 = 헤드리스(sid) 또는 "폼에 기록된 이름"으로 relay. 이 둘을 조합.
 
 ### 폼 JSON 스키마
 ```json
-{ "title": "...", "intro": "...",
+{ "sessionId": "<훅이 주입>", "sessionName": "<Claude가 /list-agents로 확인>",
+  "title": "...", "intro": "...",
   "items": [ { "id": "kebab-id", "kind": "issue|question", "heading": "...", "detail": "...",
     "proposal": "제안(선택)",
     "input": { "type": "approve|text|textarea|select|radio|checkbox",

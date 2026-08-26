@@ -190,7 +190,9 @@ FORM_INSTR = '''
 - 저장 경로: <FORMDIR>/<타임스탬프>-<슬러그>.json (이 절대경로를 그대로 사용. 폴더가 없으면 만들어라)
 - 폼을 만든 뒤에는 "📋 입력 폼을 펫에 띄웠어요" 한 줄만 남기고 종료하라. 데스크탑 펫이 그 폼을 사용자에게 띄우고, 사용자가 채워 전송하면 답이 새 프롬프트로 돌아온다.
 폼 없이 바로 진행해도 되는 경우는 '사용자 입력이 전혀 개입할 여지가 없는' 기계적 작업뿐이다(예: 오타 수정, 명시적으로 지정된 그대로의 실행). 조금이라도 정할 게 있으면 폼이다.
-폼 스키마: {"title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
+폼 스키마: {"sessionId": "<SESSION_ID>", "sessionName": (아래 설명), "title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
+- sessionId: 반드시 정확히 "<SESSION_ID>" 로 넣어라(이 폼이 어느 세션 것인지 표시 — 다른 세션 펫이 가로채지 않게).
+- sessionName: 답을 이 세션 터미널로 정확히 돌려받기 위한 것. 폼을 만들기 전에 ListAgents(또는 /list-agents 첫 줄 "This session: <이름>")로 '네 세션 이름'을 확인해 그 이름을 넣어라. 확인이 안 되면 이 필드는 생략해도 된다(앱이 sessionId로 폴백).
 approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다. 모든 선택형 항목에는 앱이 '직접 입력' 칸을 자동으로 붙이니 '기타/직접입력' 같은 선택지는 넣지 마라.'''
 d = os.path.join(home, ".claude", "session-pets-status")
 try:
@@ -328,7 +330,7 @@ else:
                     break
             if root:
                 form_dir = os.path.join(root, "docs", "form")
-                instr = FORM_INSTR.replace("<FORMDIR>", form_dir)
+                instr = FORM_INSTR.replace("<FORMDIR>", form_dir).replace("<SESSION_ID>", sid)
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit", "additionalContext": instr}}))
         except Exception:
@@ -677,6 +679,8 @@ ipcMain.handle('list-claude-procs', async () => {
         const hr = hookRows[i];
         hs = { state: hr.state, ageSec: hr.ageSec, task: hr.task, taskKind: hr.taskKind };
       }
+      // 펫이 "자기 세션"을 식별하도록 session_id를 실어준다(폼을 세션 단위로 매칭하기 위함)
+      p.sessionId = (s && s.sessionId) || (hookRows[i] && hookRows[i].sessionId) || null;
       p.hookState = hs ? hs.state : null;
       p.hookAge = hs ? hs.ageSec : Infinity;
       p.hookTask = hs ? hs.task : null;
@@ -957,11 +961,11 @@ ipcMain.handle('list-forms', (_e, cwd) => {
       .filter(f => f.endsWith('.json') && !f.startsWith('.'))
       .map(f => {
         const id = f.replace(/\.json$/, '');
-        let title = id;
-        try { title = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).title || id; } catch {}
+        let title = id, sessionId = null, sessionName = null;
+        try { const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); title = j.title || id; sessionId = j.sessionId || null; sessionName = j.sessionName || null; } catch {}
         let mtimeMs = 0;
         try { mtimeMs = fs.statSync(path.join(dir, f)).mtimeMs; } catch {}
-        return { id, title, mtimeMs };
+        return { id, title, sessionId, sessionName, mtimeMs };
       })
       .sort((a, b) => b.mtimeMs - a.mtimeMs);
   } catch { return []; }
@@ -1220,10 +1224,7 @@ ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
   const prompt = formatAnswers(form, answers);
   const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
 
-  // 1) 살아있는 세션 찾기 → SendMessage로 그 터미널에 전달 (사용자가 터미널에서 바로 봄)
-  send('form-output', { chunk: '살아있는 세션을 찾는 중…\n' });
-  const name = await resolvePeerName(cwd);
-  if (name) {
+  const runRelay = (name) => {
     send('form-output', { chunk: `‘${name}’ 세션(터미널)으로 전달 중…\n` });
     const relay =
       `너는 사용자의 폼 답변을 그 사용자의 다른(살아있는) 세션에 전달하는 중계자다. ` +
@@ -1240,23 +1241,30 @@ ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
     });
     child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
     return { ok: true, mode: 'relay', name };
-  }
+  };
+  const runHeadless = (sid, note) => {
+    send('form-output', { chunk: note });
+    let child;
+    try { child = spawn(CLAUDE_BIN, ['-p', '-r', sid, '--output-format', 'text', '--', prompt], { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (err) { return { ok: false, error: String(err.message || err) }; }
+    child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
+    child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
+    child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code, mode: 'headless' }); });
+    child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
+    return { ok: true, mode: 'headless', sessionId: sid };
+  };
 
-  // 2) 폴백: 살아있는 세션이 없으면 헤드리스로 이어감 (터미널엔 안 보이고 폼 창에만 출력)
+  // 1순위: 폼에 박힌 sessionName(그 세션이 직접 기록한 자기 이름)으로 정확히 크로스세션 전송(터미널 표시)
+  if (form.sessionName) return runRelay(form.sessionName);
+  // 2순위: 폼에 sessionId가 있으면 그 세션으로 헤드리스 resume — 절대 엉뚱한 세션에 안 감(정확, 터미널 X)
+  if (form.sessionId) return runHeadless(form.sessionId, `이 폼을 만든 세션(${form.sessionId.slice(0, 8)}…)으로 정확히 이어갑니다(헤드리스: 결과는 이 창에 표시)…\n`);
+  // 3순위(구버전 폼): cwd로 살아있는 세션 이름을 찾아 전달, 없으면 최신 트랜스크립트로 헤드리스
+  send('form-output', { chunk: '살아있는 세션을 찾는 중…\n' });
+  const name = await resolvePeerName(cwd);
+  if (name) return runRelay(name);
   const sessions = listSessionsForCwd(cwd);
   if (!sessions.length) return { ok: false, error: '이어갈 세션(살아있는 세션·트랜스크립트)을 찾지 못했어요' };
-  const sid = sessions[0].sessionId;
-  send('form-output', { chunk: '살아있는 세션을 못 찾아 헤드리스로 이어갑니다(터미널엔 안 보임)…\n' });
-  let child;
-  try {
-    child = spawn(CLAUDE_BIN, ['-p', '-r', sid, '--output-format', 'text', '--', prompt],
-      { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (err) { return { ok: false, error: String(err.message || err) }; }
-  child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
-  child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
-  child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code, mode: 'headless' }); });
-  child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
-  return { ok: true, mode: 'headless', sessionId: sid };
+  return runHeadless(sessions[0].sessionId, '살아있는 세션을 못 찾아 헤드리스로 이어갑니다(터미널엔 안 보임)…\n');
 });
 
 // 패널 "메시지 보내기": tty 주입(iTerm/Terminal 전용) 대신 크로스세션 메시징으로 아무 세션에나 전달(Warp 포함)
