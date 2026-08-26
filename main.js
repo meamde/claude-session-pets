@@ -191,7 +191,7 @@ FORM_INSTR = '''
 - 폼을 만든 뒤에는 "📋 입력 폼을 펫에 띄웠어요" 한 줄만 남기고 종료하라. 데스크탑 펫이 그 폼을 사용자에게 띄우고, 사용자가 채워 전송하면 답이 새 프롬프트로 돌아온다.
 폼 없이 바로 진행해도 되는 경우는 '사용자 입력이 전혀 개입할 여지가 없는' 기계적 작업뿐이다(예: 오타 수정, 명시적으로 지정된 그대로의 실행). 조금이라도 정할 게 있으면 폼이다.
 폼 스키마: {"title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
-approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다.'''
+approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다. 모든 선택형 항목에는 앱이 '직접 입력' 칸을 자동으로 붙이니 '기타/직접입력' 같은 선택지는 넣지 마라.'''
 d = os.path.join(home, ".claude", "session-pets-status")
 try:
     os.makedirs(d, exist_ok=True)
@@ -992,6 +992,11 @@ function renderFormHtml(form, ctx) {
         `<label class="chk"><input type="checkbox" value="${escHtml(o)}"> ${escHtml(o)}</label>`).join('') + `</div>`;
     return `<textarea class="fin" id="${id}" data-t="textarea" rows="3"></textarea>`;
   };
+  // 선택형(승인/선택/라디오/체크)에는 "직접 입력" 칸을 항상 붙인다. 제안이 다 마음에 안 들 때 override.
+  const CHOICE = new Set(['approve', 'select', 'radio', 'checkbox']);
+  const manualField = (it) => CHOICE.has((it.input || {}).type)
+    ? `<input class="fmanual" data-manual type="text" placeholder="↳ 위 선택지가 다 아니면 여기에 직접 입력 (입력하면 이게 우선)">`
+    : '';
   const cards = items.map(it => `
     <section class="card" data-id="${escHtml(it.id)}">
       <div class="kind ${it.kind === 'issue' ? 'k-issue' : 'k-q'}">${it.kind === 'issue' ? '수정 제안' : '질문'}</div>
@@ -999,7 +1004,7 @@ function renderFormHtml(form, ctx) {
       ${it.detail ? `<p class="detail">${escHtml(it.detail)}</p>` : ''}
       ${it.proposal ? `<div class="proposal"><span>제안</span>${escHtml(it.proposal)}</div>` : ''}
       ${it.input && it.input.label ? `<label class="flabel">${escHtml(it.input.label)}</label>` : ''}
-      ${field(it)}
+      ${field(it)}${manualField(it)}
     </section>`).join('');
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>${escHtml(form.title || '세션 입력')}</title>
@@ -1023,6 +1028,9 @@ function renderFormHtml(form, ctx) {
   .fin{width:100%;background:#1a1512;border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 10px;font:inherit;font-size:13px}
   .fin:focus{outline:none;border-color:var(--accent)}
   textarea.fin{resize:vertical}
+  .fmanual{width:100%;margin-top:8px;background:#1a1512;border:1px dashed var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;font-size:12.5px}
+  .fmanual:focus{outline:none;border-color:var(--accent);border-style:solid}
+  .fmanual::placeholder{color:#8a7d70}
   .frad,.fchk{display:flex;flex-direction:column;gap:6px}
   .rad,.chk{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
   input[type=radio],input[type=checkbox]{accent-color:var(--accent)}
@@ -1046,36 +1054,52 @@ function renderFormHtml(form, ctx) {
 <script>
   const CTX = ${JSON.stringify(ctx || {}).replace(/</g, '\\u003c')};
   const DKEY = 'sform-draft:' + (CTX.id || 'form');
+  function fieldVal(card){
+    const el = card.querySelector('[data-t]'); if (!el) return null;
+    const t = el.dataset.t;
+    if (t === 'checkbox') return [...el.querySelectorAll('input:checked')].map(x=>x.value);
+    if (t === 'radio') { const c = el.querySelector('input:checked'); return c ? c.value : null; }
+    return el.value;
+  }
+  // 최종 답변: '직접 입력'이 있으면 그게 선택지보다 우선
   function collect(){
     const ans = {};
     document.querySelectorAll('main .card').forEach(card => {
       const iid = card.dataset.id;
-      const el = card.querySelector('[data-t]');
-      if (!el) return;
-      const t = el.dataset.t;
-      if (t === 'checkbox') ans[iid] = [...el.querySelectorAll('input:checked')].map(x=>x.value);
-      else if (t === 'radio') { const c = el.querySelector('input:checked'); ans[iid] = c ? c.value : null; }
-      else ans[iid] = el.value;
+      const man = card.querySelector('.fmanual');
+      const mv = man && man.value.trim();
+      ans[iid] = mv ? man.value.trim() : fieldVal(card);
     });
     return ans;
   }
-  function restore(d){
+  // 초안 스냅샷: 선택값과 직접입력을 함께 저장/복원 (재열림·실패에도 안 날아감)
+  function snapshot(){
+    const s = {};
     document.querySelectorAll('main .card').forEach(card => {
-      const iid = card.dataset.id; if (!(iid in d)) return;
-      const el = card.querySelector('[data-t]'); if (!el) return;
-      const t = el.dataset.t, v = d[iid];
-      if (t === 'checkbox') el.querySelectorAll('input').forEach(x => { x.checked = Array.isArray(v) && v.includes(x.value); });
-      else if (t === 'radio') el.querySelectorAll('input').forEach(x => { x.checked = (x.value === v); });
-      else el.value = (v == null ? '' : v);
+      const man = card.querySelector('.fmanual');
+      s[card.dataset.id] = { sel: fieldVal(card), man: man ? man.value : '' };
+    });
+    return s;
+  }
+  function restoreSnap(s){
+    document.querySelectorAll('main .card').forEach(card => {
+      const d = s[card.dataset.id]; if (!d) return;
+      const el = card.querySelector('[data-t]');
+      if (el) {
+        const t = el.dataset.t, v = d.sel;
+        if (t === 'checkbox') el.querySelectorAll('input').forEach(x => { x.checked = Array.isArray(v) && v.includes(x.value); });
+        else if (t === 'radio') el.querySelectorAll('input').forEach(x => { x.checked = (x.value === v); });
+        else el.value = (v == null ? '' : v);
+      }
+      const man = card.querySelector('.fmanual'); if (man) man.value = d.man || '';
     });
   }
-  // 입력이 제출 실패·창 닫힘에도 안 날아가게: 초안을 localStorage에 저장/복원
-  try { const d = JSON.parse(localStorage.getItem(DKEY) || 'null'); if (d) restore(d); } catch (e) {}
-  document.addEventListener('input', () => { try { localStorage.setItem(DKEY, JSON.stringify(collect())); } catch (e) {} });
+  try { const d = JSON.parse(localStorage.getItem(DKEY) || 'null'); if (d) restoreSnap(d); } catch (e) {}
+  document.addEventListener('input', () => { try { localStorage.setItem(DKEY, JSON.stringify(snapshot())); } catch (e) {} });
   const send = document.getElementById('send');
   const prog = document.getElementById('progress');
   send.addEventListener('click', async () => {
-    try { localStorage.setItem(DKEY, JSON.stringify(collect())); } catch (e) {}
+    try { localStorage.setItem(DKEY, JSON.stringify(snapshot())); } catch (e) {}
     send.disabled = true; send.textContent = '전송 중…';
     prog.classList.add('show'); prog.textContent = '세션을 이어서 실행 중…\\n';
     let r; try { r = await window.sessionForm.submit({ cwd: CTX.cwd, id: CTX.id, answers: collect() }); }
