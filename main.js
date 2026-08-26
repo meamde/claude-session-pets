@@ -1145,25 +1145,112 @@ function markFormDone(cwd, id, answers) {
   } catch {}
 }
 
-ipcMain.handle('submit-form', (_e, { cwd, id, answers }) => {
+// ── 크로스세션 전달: 살아있는 세션 이름을 /list-agents로 찾아 SendMessage로 답을 그 터미널에 전달 ──
+// (헤드리스 resume는 터미널에 안 보여서, 살아있는 세션이 있으면 그 세션으로 직접 보낸다.)
+const peerNameCache = new Map(); // cwd -> { name, at }
+
+// `claude -p "/list-agents"` 출력 파싱: "[idle] · name · /cwd · started ..." 형태
+function parsePeerList(text) {
+  const rows = [];
+  for (const line of String(text).split('\n')) {
+    if (!line.includes('·')) continue;
+    const parts = line.split('·').map(s => s.trim());
+    // [status] · name · cwd · started ...  (status는 대괄호 포함)
+    const statusIdx = parts.findIndex(p => /^\[(idle|busy)\]$/i.test(p));
+    if (statusIdx === -1) continue;
+    const name = parts[statusIdx + 1];
+    const cwd = parts[statusIdx + 2];
+    if (name && cwd && cwd.startsWith('/')) rows.push({ status: parts[statusIdx].replace(/[[\]]/g, '').toLowerCase(), name, cwd });
+  }
+  return rows;
+}
+
+function resolvePeerName(cwd) {
+  const cached = peerNameCache.get(cwd);
+  if (cached && Date.now() - cached.at < 120000) return Promise.resolve(cached.name);
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try { child = spawn(CLAUDE_BIN, ['-p', '/list-agents'], { cwd: os.homedir(), env: { ...process.env }, stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch { return resolve(null); }
+    const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(null); }, 60000);
+    child.stdout.on('data', d => out += d);
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const rows = parsePeerList(out);
+      const real = (() => { try { return fs.realpathSync(cwd); } catch { return cwd; } })();
+      const match = rows.filter(r => r.cwd === cwd || r.cwd === real);
+      const pick = match.find(r => r.status === 'idle') || match[0];
+      const name = pick ? pick.name : null;
+      if (name) peerNameCache.set(cwd, { name, at: Date.now() });
+      resolve(name);
+    });
+  });
+}
+
+ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
   let form;
   try { form = JSON.parse(fs.readFileSync(path.join(formDir(cwd), id + '.json'), 'utf8')); }
   catch (err) { return { ok: false, error: '폼 파일을 읽지 못했어요: ' + String(err.message || err) }; }
-  const sessions = listSessionsForCwd(cwd);
-  if (!sessions.length) return { ok: false, error: '이 폴더에서 이어갈 세션(트랜스크립트)을 찾지 못했어요' };
-  const sid = sessions[0].sessionId;
   const prompt = formatAnswers(form, answers);
+  const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
+
+  // 1) 살아있는 세션 찾기 → SendMessage로 그 터미널에 전달 (사용자가 터미널에서 바로 봄)
+  send('form-output', { chunk: '살아있는 세션을 찾는 중…\n' });
+  const name = await resolvePeerName(cwd);
+  if (name) {
+    send('form-output', { chunk: `‘${name}’ 세션(터미널)으로 전달 중…\n` });
+    const relay =
+      `너는 사용자의 폼 답변을 그 사용자의 다른(살아있는) 세션에 전달하는 중계자다. ` +
+      `SendMessage 도구로 '${name}' 세션에게, 아래 ===사이의 텍스트를 요약·변형 없이 그대로 보내라(===표시는 빼고). ` +
+      `보낸 뒤 즉시 멈추고 다른 작업은 하지 마라.\n===\n${prompt}\n===`;
+    let child;
+    try { child = spawn(CLAUDE_BIN, ['-p', '--output-format', 'text', '--', relay], { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (err) { return { ok: false, error: String(err.message || err) }; }
+    child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
+    child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
+    child.on('close', (code) => {
+      if (code === 0) { markFormDone(cwd, id, answers); send('form-output', { chunk: `\n✅ ‘${name}’ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n` }); }
+      send('form-done', { code, mode: 'relay', name });
+    });
+    child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
+    return { ok: true, mode: 'relay', name };
+  }
+
+  // 2) 폴백: 살아있는 세션이 없으면 헤드리스로 이어감 (터미널엔 안 보이고 폼 창에만 출력)
+  const sessions = listSessionsForCwd(cwd);
+  if (!sessions.length) return { ok: false, error: '이어갈 세션(살아있는 세션·트랜스크립트)을 찾지 못했어요' };
+  const sid = sessions[0].sessionId;
+  send('form-output', { chunk: '살아있는 세션을 못 찾아 헤드리스로 이어갑니다(터미널엔 안 보임)…\n' });
   let child;
   try {
     child = spawn(CLAUDE_BIN, ['-p', '-r', sid, '--output-format', 'text', '--', prompt],
       { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) { return { ok: false, error: String(err.message || err) }; }
-  const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
   child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
   child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
-  child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code }); });
+  child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code, mode: 'headless' }); });
   child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
-  return { ok: true, sessionId: sid };
+  return { ok: true, mode: 'headless', sessionId: sid };
+});
+
+// 패널 "메시지 보내기": tty 주입(iTerm/Terminal 전용) 대신 크로스세션 메시징으로 아무 세션에나 전달(Warp 포함)
+ipcMain.handle('send-to-session', async (_e, { cwd, text }) => {
+  if (!text || !String(text).trim()) return { ok: false, error: '보낼 내용이 없어요' };
+  const name = await resolvePeerName(cwd);
+  if (!name) return { ok: false, error: '살아있는 세션을 찾지 못했어요 (크로스세션 메시징 필요 · Claude Code v2.1.224+)' };
+  const relay =
+    `SendMessage 도구로 '${name}' 세션에게, 아래 ===사이의 텍스트를 요약·변형 없이 그대로 보내라(===표시는 빼고). ` +
+    `보낸 뒤 즉시 멈추고 다른 작업은 하지 마라.\n===\n${text}\n===`;
+  return await new Promise((resolve) => {
+    let child;
+    try { child = spawn(CLAUDE_BIN, ['-p', '--output-format', 'text', '--', relay], { cwd, env: { ...process.env }, stdio: ['ignore', 'ignore', 'ignore'] }); }
+    catch (err) { return resolve({ ok: false, error: String(err.message || err) }); }
+    const timer = setTimeout(() => { try { child.kill(); } catch {} resolve({ ok: false, error: '전송 시간이 초과됐어요' }); }, 90000);
+    child.on('close', (code) => { clearTimeout(timer); resolve(code === 0 ? { ok: true, name } : { ok: false, error: '전송 실패 (code ' + code + ')' }); });
+    child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, error: String(err.message || err) }); });
+  });
 });
 
 // ── 잡담: 세션을 이어가는 대화 (claude -p --resume) ──────────

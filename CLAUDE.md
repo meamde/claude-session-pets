@@ -94,8 +94,14 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 
 `/session-form on` 한 번 치면 그 세션은 "폼 모드"가 된다. 이후 클로드가 사용자 확인/선택/입력이 필요할 때(리뷰 결과 승인, 방안 선택 등)
 인라인으로 묻지 않고 **`<cwd>/docs/form/<타임스탬프>-<슬러그>.json`** 에 폼 스펙을 쓰고 턴을 종료한다. 앱이 이를 감지해
-해당 **세션펫에 📋 말풍선** → 클릭하면 **폼 창** → 채워서 [전송]하면 **`claude -p -r <session_id>`로 그 세션을 헤드리스로 이어간다**.
-(사용자 터미널이 Warp라 tty 주입이 안 돼서 **헤드리스 resume 방식** 채택. iTerm2/Terminal의 `send-to-tty`와는 별개.)
+해당 **세션펫에 📋 말풍선** → 클릭하면 **폼 창** → 채워서 [전송]하면 답을 **살아있는 그 세션에 전달**한다.
+
+### ⭐ 전달 방식: 크로스세션 메시징(SendMessage) — Warp 이슈 해결
+사용자 터미널이 Warp라 AppleScript tty 주입(`send-to-tty`, iTerm2/Terminal 전용)이 안 됐다. 대신 **Claude Code 크로스세션 메시징**을 쓴다(v2.1.224+, `claude --version`으로 확인). 원리:
+- 각 세션은 `/tmp/cc-socks/<pid>.sock` inbox 소켓을 자동으로 연다(플래그 불필요). 하지만 **앱은 등록된 세션이 아니라 소켓 직접 포스팅은 부적합**(sender 신원 없음). 소켓 와이어 포맷도 비공개.
+- 그래서 **일회용 `claude -p`를 띄워 그게 `SendMessage` 도구로 대상 세션에 전달**한다(지원되는 정공법 → 대상 터미널에 뜨고 그 세션이 처리).
+- **대상 세션 이름 찾기**: `SendMessage`는 이름으로만 지정하는데 `ListAgents` 도구는 cwd를 안 준다. 대신 **`claude -p "/list-agents"` 명령**은 `[idle] · name · /cwd · started …` 형태로 **cwd를 보여준다** → `parsePeerList`로 파싱해 cwd→이름 매핑(`resolvePeerName`, cwd별 120초 캐시). 살아있는 세션 못 찾으면 헤드리스 `claude -p -r <sid>`로 폴백.
+- 이 방식으로 **패널의 "메시지 보내기"도 tty 주입 대신 relay로 교체**(`send-to-session` IPC) → Warp 포함 모든 터미널에서 동작, 자동화 권한 불필요. (앱이 사용자 세션을 `--name`으로 rename할 방법은 없어 이름 제어는 못 하지만, cwd 파싱으로 충분.)
 
 ### 데이터 흐름 / 조각
 - **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.
@@ -103,7 +109,7 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 - **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입.
 - **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(cwd)` → `<cwd>/docs/form/*.json`(미처리) 목록. 있으면 `pendingForm` + 📋 sticky 말풍선.
 - **표시/제출**: 클릭 → `open-form` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 `docs/form/<id>.html`로 저장 후 폼 창 로드.
-  [전송] → `submit-form` IPC가 `formatAnswers`로 프롬프트를 만들고 `claude -p -r <sid>` 실행, 출력 스트리밍, 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
+  [전송] → `submit-form` IPC가 `formatAnswers`로 프롬프트를 만들고, 위 크로스세션 relay로 살아있는 세션에 전달(없으면 헤드리스 폴백), 출력 스트리밍, 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
 - 이어갈 세션은 `listSessionsForCwd(cwd)[0]`(mtime 최신) 사용.
 
 ### 폼 JSON 스키마

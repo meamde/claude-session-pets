@@ -816,12 +816,12 @@ function renderProcs() {
     info.append(cwdEl, meta);
     div.append(dot, info);
 
-    if (p.tty && injectableTtys.has(p.tty)) {
+    if (cwd) {
       const send = document.createElement('button');
       send.className = 'btn small';
-      send.textContent = '명령';
-      send.title = '이 세션의 터미널에 프롬프트를 입력합니다';
-      send.addEventListener('click', () => openSendRow(wrap, p, short));
+      send.textContent = '메시지';
+      send.title = '이 세션에 메시지를 보냅니다 (크로스세션 — Warp 포함 모든 터미널에서 동작)';
+      send.addEventListener('click', () => openSendRow(wrap, p, short, cwd));
       div.appendChild(send);
     }
 
@@ -840,14 +840,14 @@ function renderProcs() {
   }
 }
 
-function openSendRow(wrap, p, name) {
+function openSendRow(wrap, p, name, cwd) {
   if (sendRowOpen) return;
   sendRowOpen = true;
   const row = document.createElement('div');
   row.className = 'send-row';
   const input = document.createElement('input');
   input.type = 'text';
-  input.placeholder = `${name} 세션에 보낼 프롬프트… (Enter 전송, Esc 닫기)`;
+  input.placeholder = `${name} 세션에 보낼 메시지… (Enter 전송, Esc 닫기)`;
   const btn = document.createElement('button');
   btn.className = 'btn small';
   btn.textContent = '보내기';
@@ -855,13 +855,14 @@ function openSendRow(wrap, p, name) {
   const doSend = async () => {
     const text = input.value.trim();
     if (!text) return;
-    btn.disabled = true;
-    const r = await window.pet.sendToTty(p.tty, text);
+    btn.disabled = true; btn.textContent = '전송 중…';
+    // 크로스세션 메시징으로 전달 (Warp 포함). claude를 한 번 띄워 SendMessage하므로 몇 초 걸림.
+    const r = await window.pet.sendToSession(cwd, text);
     if (r.ok) {
-      notify(`📨 ${name} — 명령 전송`);
+      notify(`📨 ${r.name || name} — 메시지 전송`);
       close();
     } else {
-      btn.disabled = false;
+      btn.disabled = false; btn.textContent = '보내기';
       alert(r.error);
     }
   };
