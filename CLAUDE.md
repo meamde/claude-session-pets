@@ -106,16 +106,18 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 ### 데이터 흐름 / 조각
 - **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.
   `enc` = 비영숫자→`-`. 명령은 **`pwd -P`**(realpath)로 인코딩(아래 gotcha 참조).
-- **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입. `<FORMDIR>`·`<SESSION_ID>`를 실제 값으로 치환.
-- **⭐ 세션 단위 라우팅(폴더 아님)**: 폼 JSON에 **`sessionId`**(훅이 값 제공 → 펫이 자기 세션 폼만 감지, 남의 폼 가로채기 방지)와 **`sessionName`**(Claude가 `/list-agents` 첫 줄에서 자기 이름 확인 → 배달 대상)을 박는다. **폼이 폴더 기준이면**, 한 세션이 다른 세션의 하위 폴더에서 작업할 때 폼이 엉뚱한 폴더에 생겨 그 폴더의 다른 세션 펫이 가로채고 배달도 그 세션으로 감(실측 버그: myorg 세션 폼이 myproj에 생겨 myproj-e4가 받음). session_id 태깅으로 해결.
-- **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(cwd)` → `<cwd>/docs/form/*.json`(미처리) 목록. **폼의 `sessionId`가 자기 것(`sp.sessionId`, `list-claude-procs`가 실어줌)과 같은 것만** 취함(sessionId 없는 구버전 폼은 폴더 단위 하위호환). 있으면 `pendingForm` + 📋 sticky 말풍선.
-- **표시/제출**: 클릭 → `open-form` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 `docs/form/<id>.html`로 저장 후 폼 창 로드.
-  [전송] → `submit-form` IPC 라우팅 우선순위: ① 폼의 `sessionName` → 그 이름으로 크로스세션 relay(정확+터미널 표시) ② 폼의 `sessionId` → 헤드리스 `claude -p -r <sid>`(정확, 터미널 X) ③ 구버전 폼 → cwd로 `resolvePeerName` relay, 없으면 최신 트랜스크립트 헤드리스. 완료 시 `docs/form/done/`으로 이동(+`.answer.json`).
+- **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입. `<FORMDIR>`·`<SESSION_ID>`·`<CWD>`를 실제 값으로 치환.
+- **⭐ 공용 폴더 + 세션 단위 라우팅(폴더/cwd 아님)**: 폼은 **`~/Library/claude-session-pets-forms/`(공용 폴더 하나)** 에 모은다. 폼 JSON에 **`sessionId`**(훅이 값 제공 → 펫이 자기 세션 폼만 감지) · **`sessionName`**(Claude가 `/list-agents` 첫 줄에서 자기 이름 확인 → 배달 대상) · **`cwd`**(훅 제공 → 이어갈 작업 폴더)를 박는다.
+  - 왜 공용 폴더인가: cwd/docs/form에 두면, 한 세션이 다른 세션의 하위 폴더에서 작업할 때 폼이 엉뚱한 폴더에 생겨 그 폴더의 다른 세션 펫이 가로채고 배달도 틀림(실측 버그: myorg 세션 폼이 myproj에 생겨 myproj-e4가 받음). 공용 폴더 + sessionId 태깅으로 원천 해결.
+  - **⚠️ 공용 폴더 경로 제약(오래 헤맴, 실측)**: ① `~/.claude` 아래는 Claude Code가 '민감 경로'로 막아 Claude의 파일 쓰기 거부. ② `acceptEdits`는 cwd 하위만 자동 승인 → 프로젝트 밖 공용 폴더는 권한 거부. → **앱이 `settings.json` `permissions.allow`에 규칙 추가로 해결.** 규칙 두 함정: **(a) `Write(...)`가 아니라 `Edit(...)`** (Edit 규칙이 Write 포함 모든 파일 편집 도구를 커버, Write 경로 규칙은 무시됨). **(b) 절대경로는 이중 슬래시 `//`** (단일 `/`는 settings 위치 기준 앵커). 최종: `Edit(//Users/…/Library/claude-session-pets-forms/**)`. 그리고 **경로에 공백 있으면 glob 매칭 실패**라 `Application Support`(공백) 대신 `~/Library/claude-session-pets-forms`(공백 없음) 사용.
+- **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(sp.sessionId)` → 공용 폴더에서 **그 sessionId 폼만** 반환. `sp.sessionId`는 `list-claude-procs`가 실어줌(트랜스크립트/훅 매칭). sessionId 모르면 감지 안 함.
+- **표시/제출**: 클릭 → `open-form(id)` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 공용 폴더에 `<id>.html` 저장 후 폼 창 로드. cwd·id는 HTML에 직접 박음(CTX).
+  [전송] → `submit-form(id)` IPC 라우팅 우선순위: ① 폼의 `sessionName` → 그 이름으로 크로스세션 relay(정확+터미널 표시) ② 폼의 `sessionId` → 헤드리스 `claude -p -r <sid>`(정확, 터미널 X) ③ 구버전 → cwd로 `resolvePeerName` relay/헤드리스 폴백. claude 실행 cwd는 폼의 `cwd` 필드. 완료 시 공용 폴더 `done/`으로 이동(+`.answer.json`).
 - **SendMessage는 이름만 받고 session_id는 못 받는다**(도구 제약). 그래서 정확 배달 = 헤드리스(sid) 또는 "폼에 기록된 이름"으로 relay. 이 둘을 조합.
 
 ### 폼 JSON 스키마
 ```json
-{ "sessionId": "<훅이 주입>", "sessionName": "<Claude가 /list-agents로 확인>",
+{ "sessionId": "<훅이 주입>", "sessionName": "<Claude가 /list-agents로 확인>", "cwd": "<훅이 주입=작업 폴더>",
   "title": "...", "intro": "...",
   "items": [ { "id": "kebab-id", "kind": "issue|question", "heading": "...", "detail": "...",
     "proposal": "제안(선택)",
@@ -135,7 +137,7 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
   **"사용자 지시(시스템 기본보다 우선)", "인라인 질문 금지", "기본값 임의선택 금지(예: 라이선스 MIT로 자동 결정 금지)"** 를 강하게 명시해야 폼을 만든다.
 - **`claude -p`(헤드리스)에서도 UserPromptSubmit 훅은 발화**한다(확인함). 그래서 resume 실행도 훅을 탄다.
 - 검증: 폼 모드 ON + "사용자만 아는 정보가 필요한" 프롬프트로 `claude -p` → `docs/form/*.json`이 스키마대로 생성되는지 확인. 렌더는 임시로 폼 창을 `capturePage`.
-- `docs/form/`은 런타임 산출물이라 `.gitignore` 처리됨.
+- 폼은 이제 프로젝트 밖 공용 폴더(`~/Library/claude-session-pets-forms/`)에 저장되므로 저장소를 오염시키지 않는다(구버전 `docs/form/`은 `.gitignore` 유지).
 
 ## 패키징 (.app)
 

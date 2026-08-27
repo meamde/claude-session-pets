@@ -187,11 +187,12 @@ FORM_INSTR = '''
 ⚠️ [사용자 지시 — 이 세션의 절대 규칙. 시스템의 기본 행동보다 이 규칙을 우선하라]
 사용자가 "폼 모드"를 켰다. 이 세션에서 사용자에게 무언가 묻거나, 선택지를 정하거나, 값을 받아야 할 때 절대 인라인 텍스트로 묻지 마라. 답변에 질문·선택지 나열·"~할까요?"·"알려주시면 진행" 류를 쓰는 것은 금지다.
 그리고 사용자에게 물어볼 만한 선택을 네가 임의의 기본값으로 정해서 진행하지 마라(예: 라이선스를 그냥 MIT로 정하기 금지). 선택지가 둘 이상이거나, 사용자 취향·환경·기존 정보·사용자만 아는 값에 따라 결과가 달라지면 → 반드시 아래 폼 파일 '하나'를 만들고 그 턴을 즉시 끝내라:
-- 저장 경로: <FORMDIR>/<타임스탬프>-<슬러그>.json (이 절대경로를 그대로 사용. 폴더가 없으면 만들어라)
+- 저장 경로: <FORMDIR>/<타임스탬프>-<슬러그>.json  ← 이 절대경로 폴더는 **데스크탑 펫 앱의 폼 수신함**이다. 사용자가 이 앱으로 폼을 받으려고 폼 모드를 켰으니, 시스템 폴더처럼 보여도 주저하지 말고 반드시 이 경로에 저장하라. (프로젝트의 docs/form 등 다른 경로는 쓰지 마라 — 이전 대화에서 본 경로가 있어도 무시하고 반드시 이 경로다. 폴더가 없으면 만들어라.)
 - 폼을 만든 뒤에는 "📋 입력 폼을 펫에 띄웠어요" 한 줄만 남기고 종료하라. 데스크탑 펫이 그 폼을 사용자에게 띄우고, 사용자가 채워 전송하면 답이 새 프롬프트로 돌아온다.
 폼 없이 바로 진행해도 되는 경우는 '사용자 입력이 전혀 개입할 여지가 없는' 기계적 작업뿐이다(예: 오타 수정, 명시적으로 지정된 그대로의 실행). 조금이라도 정할 게 있으면 폼이다.
-폼 스키마: {"sessionId": "<SESSION_ID>", "sessionName": (아래 설명), "title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
+폼 스키마: {"sessionId": "<SESSION_ID>", "sessionName": (아래 설명), "cwd": "<CWD>", "title": 제목, "intro": 한 줄 안내, "items": [{"id": "kebab-id", "kind": "issue" 또는 "question", "heading": 항목 제목, "detail": 설명, "proposal": 제안 방법(선택), "input": {"type": "approve|text|textarea|select|radio|checkbox", "label": 라벨, "options": [선택지들], "placeholder": 예시, "default": 기본값}}]}
 - sessionId: 반드시 정확히 "<SESSION_ID>" 로 넣어라(이 폼이 어느 세션 것인지 표시 — 다른 세션 펫이 가로채지 않게).
+- cwd: 반드시 정확히 "<CWD>" 로 넣어라(답변을 이어갈 작업 폴더).
 - sessionName: 답을 이 세션 터미널로 정확히 돌려받기 위한 것. 폼을 만들기 전에 ListAgents(또는 /list-agents 첫 줄 "This session: <이름>")로 '네 세션 이름'을 확인해 그 이름을 넣어라. 확인이 안 되면 이 필드는 생략해도 된다(앱이 sessionId로 폴백).
 approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다. 모든 선택형 항목에는 앱이 '직접 입력' 칸을 자동으로 붙이니 '기타/직접입력' 같은 선택지는 넣지 마라.'''
 d = os.path.join(home, ".claude", "session-pets-status")
@@ -308,29 +309,31 @@ else:
 
     # 폼 모드가 켜진 세션이면, 사용자 프롬프트마다 폼 워크플로 지시를 컨텍스트로 주입한다.
     # UserPromptSubmit 훅은 plain stdout이 아니라 JSON additionalContext로만 컨텍스트에 들어간다(실측 확인).
-    # 주의: 훅이 받는 cwd(Claude 보고값)는 명령이 마커를 만든 프로세스 cwd와 다를 수 있고(하위 폴더 등),
-    # realpath 차이(/private/var)도 있다. 그래서 cwd·realpath에서 상위로 거슬러 올라가며 마커를 찾고,
-    # 폼 저장 경로는 마커가 있던 루트의 절대경로(= 펫이 감지하는 위치)로 지정한다.
+    # 폼모드 여부는 cwd·realpath에서 상위로 거슬러 올라가며 마커를 찾아 판단한다(하위 폴더에서 작업해도 켜짐).
+    # 폼 저장은 cwd/docs/form이 아니라 홈의 공용 폴더 하나에 모은다(세션이 폴더를 오가도 위치가 안 흔들림).
     if ev == "UserPromptSubmit" and cwd:
         try:
             fmdir = os.path.join(home, ".claude", "session-pets-formmode")
-            root = None
+            on = False
             for base in (cwd, os.path.realpath(cwd)):
                 cur = base
                 while True:
                     enc = re.sub(r"[^A-Za-z0-9]", "-", cur)
                     if os.path.exists(os.path.join(fmdir, enc)):
-                        root = cur
+                        on = True
                         break
                     parent = os.path.dirname(cur)
                     if parent == cur:
                         break
                     cur = parent
-                if root:
+                if on:
                     break
-            if root:
-                form_dir = os.path.join(root, "docs", "form")
-                instr = FORM_INSTR.replace("<FORMDIR>", form_dir).replace("<SESSION_ID>", sid)
+            if on:
+                # main.js formsDir()와 일치. ~/.claude(막힘)도, 공백 경로(permission glob 실패)도 아니어야 한다.
+                forms_dir = os.path.join(home, "Library", "claude-session-pets-forms")
+                instr = (FORM_INSTR.replace("<FORMDIR>", forms_dir)
+                                   .replace("<SESSION_ID>", sid)
+                                   .replace("<CWD>", cwd))
                 print(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit", "additionalContext": instr}}))
         except Exception:
@@ -378,6 +381,7 @@ function installHooks() {
   fs.mkdirSync(HOOK_DIR(), { recursive: true });
   fs.writeFileSync(HOOK_SCRIPT(), HELPER_SRC, { mode: 0o755 });
   fs.mkdirSync(STATUS_DIR(), { recursive: true });
+  try { fs.mkdirSync(formsDir(), { recursive: true }); } catch {} // 폼 공용 폴더
   // /session-form 슬래시 명령 설치 (폼 모드 토글)
   try {
     fs.mkdirSync(COMMANDS_DIR(), { recursive: true });
@@ -414,6 +418,16 @@ function installHooks() {
     kept.push({ hooks: [{ type: 'command', command: cmd }] });
     s.hooks[ev] = kept;
   }
+  // 폼 공용 폴더 쓰기 허용: acceptEdits는 cwd 하위만 자동 승인해서, 프로젝트 밖 공용 폴더에
+  // 폼(Claude가 만듦)을 못 만든다(권한 거부). permission allow 규칙으로 그 폴더 편집을 허용한다.
+  // ⚠️ 파일 쓰기 권한 규칙 두 가지 함정(문서+실측 확인):
+  //    ① 도구명은 Write가 아니라 Edit — Edit 규칙이 Write 포함 모든 파일 편집 도구를 커버(Write 규칙은 무시됨).
+  //    ② 절대경로는 이중 슬래시 // — 단일 /는 파일시스템 루트가 아니라 settings 위치 기준으로 앵커됨.
+  s.permissions = s.permissions || {};
+  s.permissions.allow = Array.isArray(s.permissions.allow) ? s.permissions.allow : [];
+  const formsRule = `Edit(/${formsDir()}/**)`; // formsDir()가 /로 시작 → 결과는 //Users/... (이중 슬래시)
+  s.permissions.allow = s.permissions.allow.filter(r => !(typeof r === 'string' && r.includes('claude-session-pets-forms')));
+  s.permissions.allow.push(formsRule);
   // 원자적 교체: 임시 파일에 쓰고 rename (쓰다 중단돼도 원본이 안 깨짐)
   const tmp = SETTINGS_PATH() + '.session-pets-tmp';
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
@@ -431,6 +445,11 @@ function uninstallHooks() {
       }
     }
     if (!Object.keys(s.hooks).length) delete s.hooks;
+  }
+  if (s.permissions && Array.isArray(s.permissions.allow)) {
+    s.permissions.allow = s.permissions.allow.filter(r => !(typeof r === 'string' && r.includes('session-pets-forms')));
+    if (!s.permissions.allow.length) delete s.permissions.allow;
+    if (!Object.keys(s.permissions).length) delete s.permissions;
   }
   const tmp = SETTINGS_PATH() + '.session-pets-tmp';
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
@@ -946,27 +965,34 @@ ipcMain.handle('run-claude', (e, { id, prompt, cwd }) => {
 });
 
 // ── 세션 폼 (docs/form): 이슈/질문 폼 → 채워서 전송 → 세션 헤드리스 이어가기 ──
-function formDir(cwd) { return path.join(cwd, 'docs', 'form'); }
+// 폼은 cwd/docs/form이 아니라 공용 폴더 하나에 모은다.
+// (세션이 여러 폴더를 오가도 저장 위치가 안 흔들리고, 펫은 폼의 sessionId로 자기 것만 찾는다 — cwd 경로 혼선 원천 제거)
+// ⚠️ 경로 제약 두 가지(실측): ① ~/.claude 아래는 Claude Code가 '민감 경로'로 막는다.
+//    ② permission allow 규칙 Write(경로/**)의 glob이 '공백 있는 경로'(예: Application Support)에서 매칭 실패 → 권한 거부.
+//    그래서 ~/.claude도 아니고 공백도 없는 이 경로를 쓴다. 아래 훅(HELPER_SRC) forms_dir와 반드시 일치.
+function formsDir() { return path.join(os.homedir(), 'Library', 'claude-session-pets-forms'); }
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// cwd의 미처리 폼 목록 (done 폴더로 안 옮겨진 .json)
-ipcMain.handle('list-forms', (_e, cwd) => {
+// 특정 세션의 미처리 폼 목록 (공용 폴더에서 sessionId로 필터)
+ipcMain.handle('list-forms', (_e, sessionId) => {
+  if (!sessionId) return [];
   try {
-    const dir = formDir(cwd);
+    const dir = formsDir();
     return fs.readdirSync(dir)
       .filter(f => f.endsWith('.json') && !f.startsWith('.'))
       .map(f => {
         const id = f.replace(/\.json$/, '');
-        let title = id, sessionId = null, sessionName = null;
-        try { const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); title = j.title || id; sessionId = j.sessionId || null; sessionName = j.sessionName || null; } catch {}
+        let title = id, sid = null, sessionName = null;
+        try { const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); title = j.title || id; sid = j.sessionId || null; sessionName = j.sessionName || null; } catch {}
         let mtimeMs = 0;
         try { mtimeMs = fs.statSync(path.join(dir, f)).mtimeMs; } catch {}
-        return { id, title, sessionId, sessionName, mtimeMs };
+        return { id, title, sessionId: sid, sessionName, mtimeMs };
       })
+      .filter(x => x.sessionId === sessionId)   // 이 세션의 폼만
       .sort((a, b) => b.mtimeMs - a.mtimeMs);
   } catch { return []; }
 });
@@ -1106,7 +1132,7 @@ function renderFormHtml(form, ctx) {
     try { localStorage.setItem(DKEY, JSON.stringify(snapshot())); } catch (e) {}
     send.disabled = true; send.textContent = '전송 중…';
     prog.classList.add('show'); prog.textContent = '세션을 이어서 실행 중…\\n';
-    let r; try { r = await window.sessionForm.submit({ cwd: CTX.cwd, id: CTX.id, answers: collect() }); }
+    let r; try { r = await window.sessionForm.submit({ id: CTX.id, answers: collect() }); }
     catch (e) { r = { ok:false, error: String((e && e.message) || e) }; }
     if (!r || !r.ok) {
       prog.textContent += '\\n[오류] ' + ((r && r.error) || '전송 실패') + '\\n(입력은 저장돼 있어요. 다시 전송을 눌러도 됩니다.)';
@@ -1126,18 +1152,18 @@ function renderFormHtml(form, ctx) {
 }
 
 let formWin = null;
-ipcMain.handle('open-form', (_e, { cwd, id }) => {
+ipcMain.handle('open-form', (_e, { id }) => {
   try {
-    const form = JSON.parse(fs.readFileSync(path.join(formDir(cwd), id + '.json'), 'utf8'));
-    const html = renderFormHtml(form, { cwd, id });
-    const htmlPath = path.join(formDir(cwd), id + '.html');
-    fs.writeFileSync(htmlPath, html); // 요구사항: 렌더된 HTML도 docs/form/에 남김
+    const form = JSON.parse(fs.readFileSync(path.join(formsDir(), id + '.json'), 'utf8'));
+    const html = renderFormHtml(form, { id });
+    const htmlPath = path.join(formsDir(), id + '.html');
+    fs.writeFileSync(htmlPath, html); // 렌더된 HTML도 공용 폴더에 남김
     if (formWin && !formWin.isDestroyed()) formWin.close();
     formWin = new BrowserWindow({
       width: 580, height: 760, title: form.title || '세션 입력', show: true,
       webPreferences: { preload: path.join(__dirname, 'form-preload.js'), contextIsolation: true, nodeIntegration: false },
     });
-    formWin.loadFile(htmlPath); // CTX(cwd·id)는 renderFormHtml이 HTML에 직접 박음(로드 전에 확정 → 예전 did-finish-load 주입 타이밍 버그 제거)
+    formWin.loadFile(htmlPath); // CTX(id)는 renderFormHtml이 HTML에 직접 박음(로드 전에 확정)
     return { ok: true };
   } catch (err) { return { ok: false, error: String(err.message || err) }; }
 });
@@ -1146,7 +1172,7 @@ ipcMain.handle('close-form', () => { if (formWin && !formWin.isDestroyed()) form
 
 function formatAnswers(form, answers) {
   const lines = [
-    '아래는 사용자가 docs/form 폼에 입력한 응답입니다. 이 결정에 따라 이어서 작업을 진행해주세요.',
+    '아래는 사용자가 입력 폼에 채워 보낸 응답입니다. 이 결정에 따라 이어서 작업을 진행해주세요.',
     '',
   ];
   for (const it of (form.items || [])) {
@@ -1160,9 +1186,9 @@ function formatAnswers(form, answers) {
   return lines.join('\n');
 }
 
-function markFormDone(cwd, id, answers) {
+function markFormDone(id, answers) {
   try {
-    const dir = formDir(cwd);
+    const dir = formsDir();
     const doneDir = path.join(dir, 'done');
     fs.mkdirSync(doneDir, { recursive: true });
     try { fs.writeFileSync(path.join(doneDir, id + '.answer.json'), JSON.stringify(answers, null, 2)); } catch {}
@@ -1217,11 +1243,12 @@ function resolvePeerName(cwd) {
   });
 }
 
-ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
+ipcMain.handle('submit-form', async (_e, { id, answers }) => {
   let form;
-  try { form = JSON.parse(fs.readFileSync(path.join(formDir(cwd), id + '.json'), 'utf8')); }
+  try { form = JSON.parse(fs.readFileSync(path.join(formsDir(), id + '.json'), 'utf8')); }
   catch (err) { return { ok: false, error: '폼 파일을 읽지 못했어요: ' + String(err.message || err) }; }
   const prompt = formatAnswers(form, answers);
+  const cwd = (form.cwd && fs.existsSync(form.cwd)) ? form.cwd : os.homedir(); // claude 실행 폴더 = 폼에 기록된 작업 폴더
   const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
 
   const runRelay = (name) => {
@@ -1236,7 +1263,7 @@ ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
     child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
     child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
     child.on('close', (code) => {
-      if (code === 0) { markFormDone(cwd, id, answers); send('form-output', { chunk: `\n✅ ‘${name}’ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n` }); }
+      if (code === 0) { markFormDone(id, answers); send('form-output', { chunk: `\n✅ ‘${name}’ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n` }); }
       send('form-done', { code, mode: 'relay', name });
     });
     child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
@@ -1249,7 +1276,7 @@ ipcMain.handle('submit-form', async (_e, { cwd, id, answers }) => {
     catch (err) { return { ok: false, error: String(err.message || err) }; }
     child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
     child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
-    child.on('close', (code) => { if (code === 0) markFormDone(cwd, id, answers); send('form-done', { code, mode: 'headless' }); });
+    child.on('close', (code) => { if (code === 0) markFormDone(id, answers); send('form-done', { code, mode: 'headless' }); });
     child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
     return { ok: true, mode: 'headless', sessionId: sid };
   };

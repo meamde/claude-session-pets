@@ -514,12 +514,9 @@ class SessionPet {
   // docs/form에 새 폼이 있으면 '입력 필요' 말풍선을 띄우고, 없어지면 치운다
   async checkForms() {
     if (this.state === 'bye') return;
-    if (!this.key || this.key.startsWith('pid:')) return; // cwd 없는 세션은 폼 경로 없음
+    if (!this.sessionId) return; // 내 세션 id를 알아야 공용 폴더에서 내 폼을 찾는다
     let forms = [];
-    try { forms = await window.pet.listForms(this.key); } catch { return; }
-    // 폼에 sessionId가 박혀 있으면 '내 세션 폼'만 취한다(다른 세션이 같은 폴더의 폼을 가로채지 않게).
-    // sessionId 없는 폼(구버전)이나 내 세션 id를 아직 모를 땐 폴더 단위로 취한다(하위호환).
-    if (this.sessionId) forms = forms.filter(f => !f.sessionId || f.sessionId === this.sessionId);
+    try { forms = await window.pet.listForms(this.sessionId); } catch { return; }
     const f = forms && forms[0];
     if (f) {
       if (!this.pendingForm || this.pendingForm.id !== f.id) {
@@ -577,7 +574,7 @@ class SessionPet {
   onClick() {
     if (this.state === 'bye') return;
     if (this.pendingForm) {    // 대기 중인 폼이 있으면 폼 창을 연다
-      window.pet.openForm(this.key, this.pendingForm.id);
+      window.pet.openForm(this.pendingForm.id);
       return;
     }
     if (this.working) return;  // 작업 중 말풍선은 클릭해도 유지

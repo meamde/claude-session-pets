@@ -15,8 +15,8 @@ contextBridge.exposeInMainWorld('pet', {
   getSessionImage: (key) => ipcRenderer.invoke('get-session-image', key),
   deleteSessionImage: (key) => ipcRenderer.invoke('delete-session-image', key),
 
-  listForms: (cwd) => ipcRenderer.invoke('list-forms', cwd),
-  openForm: (cwd, id) => ipcRenderer.invoke('open-form', { cwd, id }),
+  listForms: (sessionId) => ipcRenderer.invoke('list-forms', sessionId),
+  openForm: (id) => ipcRenderer.invoke('open-form', { id }),
 
   listClaudeProcs: () => ipcRenderer.invoke('list-claude-procs'),
   killProc: (pid, force) => ipcRenderer.invoke('kill-proc', pid, force),
