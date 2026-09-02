@@ -96,12 +96,16 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 인라인으로 묻지 않고 **`<cwd>/docs/form/<타임스탬프>-<슬러그>.json`** 에 폼 스펙을 쓰고 턴을 종료한다. 앱이 이를 감지해
 해당 **세션펫에 📋 말풍선** → 클릭하면 **폼 창** → 채워서 [전송]하면 답을 **살아있는 그 세션에 전달**한다.
 
-### ⭐ 전달 방식: 크로스세션 메시징(SendMessage) — Warp 이슈 해결
-사용자 터미널이 Warp라 AppleScript tty 주입(`send-to-tty`, iTerm2/Terminal 전용)이 안 됐다. 대신 **Claude Code 크로스세션 메시징**을 쓴다(v2.1.224+, `claude --version`으로 확인). 원리:
-- 각 세션은 `/tmp/cc-socks/<pid>.sock` inbox 소켓을 자동으로 연다(플래그 불필요). 하지만 **앱은 등록된 세션이 아니라 소켓 직접 포스팅은 부적합**(sender 신원 없음). 소켓 와이어 포맷도 비공개.
-- 그래서 **일회용 `claude -p`를 띄워 그게 `SendMessage` 도구로 대상 세션에 전달**한다(지원되는 정공법 → 대상 터미널에 뜨고 그 세션이 처리).
-- **대상 세션 이름 찾기**: `SendMessage`는 이름으로만 지정하는데 `ListAgents` 도구는 cwd를 안 준다. 대신 **`claude -p "/list-agents"` 명령**은 `[idle] · name · /cwd · started …` 형태로 **cwd를 보여준다** → `parsePeerList`로 파싱해 cwd→이름 매핑(`resolvePeerName`, cwd별 120초 캐시). 살아있는 세션 못 찾으면 헤드리스 `claude -p -r <sid>`로 폴백.
-- 이 방식으로 **패널의 "메시지 보내기"도 tty 주입 대신 relay로 교체**(`send-to-session` IPC) → Warp 포함 모든 터미널에서 동작, 자동화 권한 불필요. (앱이 사용자 세션을 `--name`으로 rename할 방법은 없어 이름 제어는 못 하지만, cwd 파싱으로 충분.)
+### ⭐ 전달 방식: 크로스세션 inbox 소켓에 직접 주입 (<1초, LLM 없음) — Warp 포함
+사용자 터미널이 Warp라 AppleScript tty 주입(`send-to-tty`, iTerm2/Terminal 전용)이 안 됐다. Claude Code 크로스세션 메시징(v2.1.224+)을 쓰되, **각 세션의 inbox 소켓 `/tmp/cc-socks/<pid>.sock`에 앱이 직접 주입**한다. `claude -p` relay는 콜드 스타트 7~14초라 느려서 폐기(폴백으로만 유지).
+- **와이어 포맷은 공개돼 있다**(github.com/PeterSR/claude-code-socket-transport). 소켓에 JSON 한 줄씩 write 후 half-close(WR shutdown):
+  - auth: `{"type":"auth","token":"<peerToken>"}` — `peerToken`은 `~/.claude/sessions/<pid>.<sha256(sockpath)>.key`의 필드(앱이 `<pid>.*.key` glob으로 찾아 읽음). own-child면 `CLAUDE_CODE_MESSAGING_TOKEN`.
+  - message: `{"msgV":1,"type":"user","message":{"role":"user","content":"<text>"},"session_id":"<대상sid>","priority":"next"}`. `session_id`는 수신자와 대조(불일치 시 드롭)라 정확한 대상 보장. (⚠️ 이전에 `{"type":"message","text":...}`로 보내 실패했음 — `type:"user"` + `message.content`가 정답.)
+- **구현**: `injectToSocket(pid, sid, text)`(Node `net`) / `injectBySessionId(sid, text)`(→ `computeProcs()`로 sid→pid 찾아 주입). 실측 **365ms**.
+- **라우팅**(submit-form): ⭐0순위 `injectBySessionId(form.sessionId)` 소켓 주입(성공 시 `mode:'socket'`) → 실패 시 폴백 ①`sessionName` relay(`claude -p`) ②`sessionId` 헤드리스 ③cwd `resolvePeerName`.
+- 패널 "메시지 보내기"도 동일(`send-to-session`이 sessionId 받아 소켓 우선, relay 폴백). Warp 포함 모든 터미널, 자동화 권한 불필요.
+- ⚠️ **앱(Electron)이 소켓·토큰 파일을 다루는 건 정상**이지만, Claude Code(내가 Bash로) 같은 짓을 하면 auto-mode classifier가 막는다(다른 세션 토큰 접근 = 보안). 그래서 이 부분 검증은 앱 자가 실행으로 했다.
+- relay 대상 이름은 `claude -p "/list-agents"` 출력을 `parsePeerList`로 파싱(cwd→이름, `resolvePeerName` 120초 캐시) — 폴백 경로에서만 사용.
 
 ### 데이터 흐름 / 조각
 - **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.

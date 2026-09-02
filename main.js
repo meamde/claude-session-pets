@@ -628,7 +628,7 @@ function listSessionsForCwd(cwd) {
   }));
 }
 
-ipcMain.handle('list-claude-procs', async () => {
+async function computeProcs() {
   const out = await execFileP('ps', ['-axo', 'pid=,ppid=,pcpu=,cputime=,etime=,tty=,command=']);
   const procs = [];
   for (const line of out.split('\n')) {
@@ -707,7 +707,54 @@ ipcMain.handle('list-claude-procs', async () => {
     });
   }
   return procs;
-});
+}
+ipcMain.handle('list-claude-procs', computeProcs);
+
+// ── 크로스세션 소켓 직접 주입 (LLM/claude -p 없이 즉시 전달, <1초) ──
+// 와이어 포맷(공개): 유닉스 소켓에 JSON 한 줄씩 write 후 half-close.
+//   auth:    {"type":"auth","token":"<peerToken>"}   (peerToken은 ~/.claude/sessions/<pid>.*.key)
+//   message: {"msgV":1,"type":"user","message":{"role":"user","content":"<text>"},"session_id":"<대상sid>","priority":"next"}
+const net = require('net');
+function readPeerToken(pid) {
+  try {
+    const dir = path.join(HOOK_DIR(), 'sessions');
+    const f = fs.readdirSync(dir).find(n => n.startsWith(pid + '.') && n.endsWith('.key'));
+    if (!f) return null;
+    return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).peerToken || null;
+  } catch { return null; }
+}
+// 성공 시 resolve(true). 소켓/토큰 없거나 실패면 resolve(false) → 호출측이 relay로 폴백.
+function injectToSocket(pid, sessionId, text) {
+  return new Promise((resolve) => {
+    const sockpath = path.join('/tmp/cc-socks', pid + '.sock');
+    if (!fs.existsSync(sockpath)) return resolve(false);
+    const token = readPeerToken(pid);
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; try { sock.destroy(); } catch {} resolve(ok); } };
+    const sock = net.createConnection(sockpath);
+    sock.setTimeout(4000);
+    sock.on('connect', () => {
+      if (token) sock.write(JSON.stringify({ type: 'auth', token }) + '\n');
+      const msg = { msgV: 1, type: 'user', message: { role: 'user', content: text }, priority: 'next' };
+      if (sessionId) msg.session_id = sessionId;
+      sock.write(JSON.stringify(msg) + '\n');
+      if (sock.end) sock.end();       // half-close (WR shutdown)
+      // 즉시 응답이 없어도 전달은 됨(단방향). 짧게 기다렸다 성공 처리.
+      setTimeout(() => finish(true), 250);
+    });
+    sock.on('error', () => finish(false));
+    sock.on('timeout', () => finish(false));
+  });
+}
+// form.sessionId(또는 임의 sessionId)로 살아있는 pid를 찾아 소켓 주입. 성공하면 true.
+async function injectBySessionId(sessionId, text) {
+  if (!sessionId) return false;
+  let procs = [];
+  try { procs = await computeProcs(); } catch { return false; }
+  const p = procs.find(x => x.sessionId === sessionId);
+  if (!p) return false;
+  return injectToSocket(String(p.pid), sessionId, text);
+}
 
 // ── 실행 중인 세션에 명령 주입 (tty가 열린 터미널 탭을 찾아 타이핑) ──
 
@@ -1281,10 +1328,22 @@ ipcMain.handle('submit-form', async (_e, { id, answers }) => {
     return { ok: true, mode: 'headless', sessionId: sid };
   };
 
-  // 1순위: 폼에 박힌 sessionName(그 세션이 직접 기록한 자기 이름)으로 정확히 크로스세션 전송(터미널 표시)
+  // ⭐ 0순위: 소켓 직접 주입 (LLM/claude -p 없이 <1초, 그 세션 터미널에 즉시). 폼의 sessionId로 살아있는 pid 찾아 주입.
+  if (form.sessionId) {
+    send('form-output', { chunk: '세션에 전달 중…\n' });
+    const ok = await injectBySessionId(form.sessionId, prompt);
+    if (ok) {
+      markFormDone(id, answers);
+      send('form-output', { chunk: '✅ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n' });
+      send('form-done', { code: 0, mode: 'socket' });
+      return { ok: true, mode: 'socket' };
+    }
+    // 소켓 실패(세션 죽음/토큰 없음) → 아래 폴백
+  }
+  // 1순위(폴백): sessionName으로 크로스세션 relay(claude -p, 터미널 표시)
   if (form.sessionName) return runRelay(form.sessionName);
-  // 2순위: 폼에 sessionId가 있으면 그 세션으로 헤드리스 resume — 절대 엉뚱한 세션에 안 감(정확, 터미널 X)
-  if (form.sessionId) return runHeadless(form.sessionId, `이 폼을 만든 세션(${form.sessionId.slice(0, 8)}…)으로 정확히 이어갑니다(헤드리스: 결과는 이 창에 표시)…\n`);
+  // 2순위(폴백): sessionId로 헤드리스 resume (정확, 터미널 X)
+  if (form.sessionId) return runHeadless(form.sessionId, `이 폼을 만든 세션(${form.sessionId.slice(0, 8)}…)으로 이어갑니다(헤드리스: 결과는 이 창에 표시)…\n`);
   // 3순위(구버전 폼): cwd로 살아있는 세션 이름을 찾아 전달, 없으면 최신 트랜스크립트로 헤드리스
   send('form-output', { chunk: '살아있는 세션을 찾는 중…\n' });
   const name = await resolvePeerName(cwd);
@@ -1295,8 +1354,11 @@ ipcMain.handle('submit-form', async (_e, { id, answers }) => {
 });
 
 // 패널 "메시지 보내기": tty 주입(iTerm/Terminal 전용) 대신 크로스세션 메시징으로 아무 세션에나 전달(Warp 포함)
-ipcMain.handle('send-to-session', async (_e, { cwd, text }) => {
+ipcMain.handle('send-to-session', async (_e, { cwd, sessionId, text }) => {
   if (!text || !String(text).trim()) return { ok: false, error: '보낼 내용이 없어요' };
+  // ⭐ 0순위: 소켓 직접 주입 (<1초). 펫이 넘긴 sessionId로 살아있는 pid 찾아 주입.
+  if (sessionId && await injectBySessionId(sessionId, text)) return { ok: true, mode: 'socket' };
+  // 폴백: claude -p relay
   const name = await resolvePeerName(cwd);
   if (!name) return { ok: false, error: '살아있는 세션을 찾지 못했어요 (크로스세션 메시징 필요 · Claude Code v2.1.224+)' };
   const relay =

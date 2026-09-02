@@ -859,7 +859,7 @@ function openSendRow(wrap, p, name, cwd) {
     if (!text) return;
     btn.disabled = true; btn.textContent = '전송 중…';
     // 크로스세션 메시징으로 전달 (Warp 포함). claude를 한 번 띄워 SendMessage하므로 몇 초 걸림.
-    const r = await window.pet.sendToSession(cwd, text);
+    const r = await window.pet.sendToSession(cwd, p.sessionId || null, text);
     if (r.ok) {
       notify(`📨 ${r.name || name} — 메시지 전송`);
       close();
