@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('pet', {
   getSessionImage: (key) => ipcRenderer.invoke('get-session-image', key),
   deleteSessionImage: (key) => ipcRenderer.invoke('delete-session-image', key),
 
+  getUsage: (force) => ipcRenderer.invoke('get-usage', force),
+
   listForms: (sessionId) => ipcRenderer.invoke('list-forms', sessionId),
   openForm: (id) => ipcRenderer.invoke('open-form', { id }),
 

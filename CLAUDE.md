@@ -90,6 +90,14 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
   항목: 창 앞으로 가져오기(기존 우클릭 동작 흡수) / 이미지 변경… / 좌우 반전(토글) / 기본 모습으로(`deleteSessionImage`+CLAUDE_ICON 복귀).
   바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. 더블클릭(이미지 변경)·드롭(이미지 지정)은 그대로 유지
 
+## 사용량 표시 (/usage) — 메인펫 HP바 + 사용량 탭
+
+메인펫 머리 위에 게임 HP바처럼 2줄(`5h` 세션 / `주간`)로 Claude 구독 사용량을 표시하고, 패널 "📊 사용량" 탭에 상세를 보여준다.
+- **소스**: `claude -p "/usage"` stdout 파싱(`parseUsage`). `Current session: N% used · resets …`, `Current week (all models|Fable|…): N%`, `Last 24h/7d · N requests · M sessions`.
+- **IPC**: `get-usage`(force) — `fetchUsage`가 `/usage` 실행(콜드 스타트 7~14초라 **60초 캐시** + inflight 중복 방지). HP바는 시작 시 1회 + **5분 주기**(`refreshUsage(false)`), 탭 열 때 `refreshUsage(true)` 강제 갱신.
+- **HP바**(`#hpbars`, 메인펫 `#pet` 위 절대배치): `5h`=세션, `주간`=all models 주간. `usageColor(pct)`로 게이지 색(≥90 빨강/≥75 주황/≥50 노랑/그외 초록). 세션 리셋 직후엔 `/usage`에 세션 라인이 잠깐 없어 `–`로 뜰 수 있음(다음 갱신에 0%로).
+- **탭**(`renderUsageTab`): 세션(5h) + 주간 모델별(전체·Fable 등) 게이지 + 24h/7d 요약. DOM API로 렌더(문자열 innerHTML 금지 — XSS/안정성).
+
 ## 세션 폼 (docs/form) — 입력 필요 항목을 펫이 폼으로 띄우고, 답을 세션에 되돌림
 
 `/session-form on` 한 번 치면 그 세션은 "폼 모드"가 된다. 이후 클로드가 사용자 확인/선택/입력이 필요할 때(리뷰 결과 승인, 방안 선택 등)

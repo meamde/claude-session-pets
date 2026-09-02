@@ -1383,6 +1383,60 @@ ipcMain.handle('send-to-session', async (_e, { cwd, sessionId, text }) => {
   });
 });
 
+// ── 사용량 (/usage) — 메인펫 HP바 + 사용량 탭 ──────────────
+// claude -p "/usage"는 콜드 스타트라 느리다 → 캐시하고 주기 갱신.
+let usageCache = { at: 0, data: null };
+let usageInflight = null;
+
+function parseUsage(text) {
+  const grab = (label) => {
+    const m = text.match(new RegExp(label.replace(/[()]/g, '\\$&') + ':\\s*(\\d+)%\\s*used\\s*·\\s*resets\\s*(.+)'));
+    return m ? { pct: +m[1], resets: m[2].trim() } : null;
+  };
+  const weeks = [];
+  const re = /Current week \(([^)]+)\):\s*(\d+)%\s*used\s*·\s*resets\s*(.+)/g;
+  let m;
+  while ((m = re.exec(text))) weeks.push({ model: m[1].trim(), pct: +m[2], resets: m[3].trim() });
+  const spans = [];
+  const re2 = /Last (24h|7d)\s*·\s*(\d+) requests\s*·\s*(\d+) sessions/g;
+  while ((m = re2.exec(text))) spans.push({ span: m[1], requests: +m[2], sessions: +m[3] });
+  return {
+    session: grab('Current session'),
+    weekAll: grab('Current week \\(all models\\)'),
+    weeks,          // [{model:'all models'|'Fable'|…, pct, resets}]
+    spans,          // [{span:'24h'|'7d', requests, sessions}]
+    raw: text.trim(),
+  };
+}
+
+function fetchUsage() {
+  if (usageInflight) return usageInflight;
+  usageInflight = new Promise((resolve) => {
+    let out = '';
+    let child;
+    try { child = spawn(CLAUDE_BIN, ['-p', '/usage'], { cwd: os.homedir(), env: { ...process.env }, stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch { usageInflight = null; return resolve(null); }
+    const timer = setTimeout(() => { try { child.kill(); } catch {} }, 60000);
+    child.stdout.on('data', d => out += d);
+    child.on('error', () => { clearTimeout(timer); usageInflight = null; resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const data = out.includes('%') ? parseUsage(out) : null;
+      if (data) usageCache = { at: Date.now(), data };
+      usageInflight = null;
+      resolve(data);
+    });
+  });
+  return usageInflight;
+}
+
+// 캐시 우선. force=true면 강제 갱신. (HP바는 캐시, 탭 열 때 force로 최신화)
+ipcMain.handle('get-usage', async (_e, force) => {
+  if (!force && usageCache.data && Date.now() - usageCache.at < 60000) return usageCache.data;
+  const data = await fetchUsage();
+  return data || usageCache.data || null;
+});
+
 // ── 잡담: 세션을 이어가는 대화 (claude -p --resume) ──────────
 
 const PERSONA = '너는 맥 데스크탑 위에 사는 귀여운 펫이야. 사용자의 친구로서 가볍게 잡담을 나눠. ' +

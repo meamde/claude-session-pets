@@ -71,6 +71,36 @@
     50%     { transform: rotate(2deg) scaleY(1); }
   }
 
+  /* 메인펫 머리 위 사용량 HP바 (2줄: 5h 세션 / 주간) */
+  #hpbars {
+    position: absolute; bottom: calc(100% + 2px); left: 50%;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 3px;
+    width: 132px; pointer-events: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  }
+  .hprow { display: flex; align-items: center; gap: 5px; }
+  .hplbl {
+    font-size: 9px; font-weight: 800; color: #fff; width: 20px; text-align: right;
+    text-shadow: 0 1px 2px rgba(0,0,0,.9); flex: none;
+  }
+  .hptrack {
+    flex: 1; height: 8px; border-radius: 4px;
+    background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.25);
+    overflow: hidden;
+  }
+  .hpfill {
+    display: block; height: 100%; width: 0%;
+    border-radius: 3px 0 0 3px;
+    background: #57c060; /* 기본 여유(초록). JS가 사용량에 따라 색 조정 */
+    transition: width .5s ease, background .3s;
+  }
+  .hppct {
+    font-size: 9px; font-weight: 800; color: #fff; width: 26px; text-align: left;
+    text-shadow: 0 1px 2px rgba(0,0,0,.9); flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* 뱃지: 실행 중인 claude 프로세스 수 */
   #badge {
     position: absolute; top: -2px; right: -2px;
@@ -286,7 +316,7 @@
   /* ── 패널 ───────────────────────────────── */
   #panel {
     position: absolute;
-    width: 420px;
+    width: 460px;
     max-height: 520px;
     background: rgba(28, 27, 26, .96);
     border: 1px solid rgba(255,255,255,.12);
@@ -301,18 +331,21 @@
   #panel.show { display: flex; }
   #panel-header {
     display: flex; align-items: center;
-    padding: 10px 12px 0;
-    gap: 6px;
+    padding: 10px 10px 0;
+    gap: 3px;
   }
   .tab {
-    padding: 6px 12px;
+    padding: 6px 9px;
     border-radius: 8px 8px 0 0;
-    font-size: 13px;
+    font-size: 12.5px;
     cursor: pointer;
     color: #aaa;
     background: transparent;
     border: none;
+    white-space: nowrap;   /* 탭 글자 줄내림 방지 */
+    flex: none;
   }
+  #proc-count { font-size: 11px; }
   .tab.active { color: #fff; background: rgba(255,255,255,.08); }
   #panel-close {
     margin-left: auto;
@@ -426,6 +459,21 @@
   .hint { font-size: 11px; color: #888; }
   .sep { border-top: 1px solid rgba(255,255,255,.08); margin: 4px 0; }
 
+  /* 사용량 탭 */
+  #usage-body { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .ugauge { display: flex; flex-direction: column; gap: 5px; }
+  .ugauge-top { display: flex; align-items: baseline; gap: 8px; }
+  .ugauge-name { font-size: 13px; font-weight: 700; color: #eee; }
+  .ugauge-pct { font-size: 15px; font-weight: 800; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .ugauge-track { height: 12px; border-radius: 6px; background: rgba(255,255,255,.09); overflow: hidden; }
+  .ugauge-fill { height: 100%; border-radius: 6px; background: #57c060; transition: width .4s ease; }
+  .ugauge-reset { font-size: 11px; color: #999; }
+  .ublock { background: rgba(255,255,255,.05); border-radius: 10px; padding: 10px 12px; }
+  .ublock h4 { margin: 0 0 6px; font-size: 12px; color: #bbb; font-weight: 700; }
+  .ublock .big { font-size: 13px; color: #eee; }
+  .ublock ul { margin: 6px 0 0; padding-left: 16px; }
+  .ublock li { font-size: 12px; color: #cbb; margin: 2px 0; }
+
   /* 잡담 */
   #chat-log {
     display: flex; flex-direction: column; gap: 8px;
@@ -463,6 +511,10 @@
 
   <div id="pet" class="interactive anim-idle">
     <div id="bubble"></div>
+    <div id="hpbars">
+      <div class="hprow"><span class="hplbl">5h</span><span class="hptrack"><span class="hpfill" id="hp-session"></span></span><span class="hppct" id="hp-session-pct">–</span></div>
+      <div class="hprow"><span class="hplbl">주간</span><span class="hptrack"><span class="hpfill" id="hp-week"></span></span><span class="hppct" id="hp-week-pct">–</span></div>
+    </div>
     <div id="zzz">💤</div>
     <div id="sprite-wrap"><img id="sprite" alt="pet"></div>
     <div id="badge"></div>
@@ -472,7 +524,8 @@
     <div id="panel-header">
       <button class="tab active" data-tab="chat">💬 잡담</button>
       <button class="tab" data-tab="cmd">🗣️ 명령</button>
-      <button class="tab" data-tab="procs">📋 Claude 목록 <span id="proc-count"></span></button>
+      <button class="tab" data-tab="procs">📋 목록 <span id="proc-count"></span></button>
+      <button class="tab" data-tab="usage">📊 사용량</button>
       <button class="tab" data-tab="settings">⚙️ 설정</button>
       <button id="panel-close">✕</button>
     </div>
@@ -508,6 +561,14 @@
         <button class="btn ghost small" id="refresh-procs">새로고침</button>
       </div>
       <div id="proc-list"><div class="empty">불러오는 중…</div></div>
+    </div>
+
+    <div class="tab-body" data-tab="usage">
+      <div class="row">
+        <span class="hint" style="flex:1">Claude 구독 사용량 (<code>/usage</code>)</span>
+        <button class="btn ghost small" id="refresh-usage">새로고침</button>
+      </div>
+      <div id="usage-body"><div class="empty">불러오는 중…</div></div>
     </div>
 
     <div class="tab-body" data-tab="settings">

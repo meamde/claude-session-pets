@@ -276,8 +276,76 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.tab-body').forEach(b =>
       b.classList.toggle('active', b.dataset.tab === tab.dataset.tab));
     if (tab.dataset.tab === 'procs') refreshProcs();
+    if (tab.dataset.tab === 'usage') refreshUsage(true); // 탭 열면 강제 최신화
   });
 });
+
+// ── 사용량 (/usage): 메인펫 HP바 + 사용량 탭 ──────────
+// 사용량 %에 따른 색: 낮음=여유(초록) → 높음=경고(빨강)
+function usageColor(pct) {
+  if (pct == null) return '#888';
+  if (pct >= 90) return '#e0654e';
+  if (pct >= 75) return '#e8a13c';
+  if (pct >= 50) return '#e8d13c';
+  return '#57c060';
+}
+function setHpBar(fillId, pctId, u) {
+  const fill = $(fillId), lbl = $(pctId);
+  const pct = u ? u.pct : null;
+  fill.style.width = (pct == null ? 0 : Math.min(100, pct)) + '%';
+  fill.style.background = usageColor(pct);
+  lbl.textContent = pct == null ? '–' : pct + '%';
+}
+async function refreshUsage(force) {
+  let u = null;
+  try { u = await window.pet.getUsage(force); } catch {}
+  // HP바 갱신 (세션=5h, 주간=all models)
+  const week = u && (u.weekAll || (u.weeks && u.weeks.find(w => /all models/i.test(w.model))));
+  setHpBar('#hp-session', '#hp-session-pct', u && u.session);
+  setHpBar('#hp-week', '#hp-week-pct', week);
+  // 탭이 열려 있으면 상세도 렌더
+  const body = $('#usage-body');
+  if (body && document.querySelector('.tab-body[data-tab="usage"]').classList.contains('active')) {
+    renderUsageTab(body, u);
+  }
+}
+function gaugeHtml(name, u) {
+  if (!u) return '';
+  const c = usageColor(u.pct);
+  const wrap = document.createElement('div');
+  wrap.className = 'ugauge';
+  const top = document.createElement('div'); top.className = 'ugauge-top';
+  const nm = document.createElement('span'); nm.className = 'ugauge-name'; nm.textContent = name;
+  const pc = document.createElement('span'); pc.className = 'ugauge-pct'; pc.style.color = c; pc.textContent = u.pct + '%';
+  top.append(nm, pc);
+  const track = document.createElement('div'); track.className = 'ugauge-track';
+  const fill = document.createElement('div'); fill.className = 'ugauge-fill';
+  fill.style.width = Math.min(100, u.pct) + '%'; fill.style.background = c;
+  track.appendChild(fill);
+  const rs = document.createElement('div'); rs.className = 'ugauge-reset'; rs.textContent = 'resets ' + u.resets;
+  wrap.append(top, track, rs);
+  return wrap;
+}
+function renderUsageTab(body, u) {
+  body.textContent = '';
+  if (!u) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '사용량을 불러오지 못했어요'; body.appendChild(e); return; }
+  // 세션(5h)
+  const s = gaugeHtml('현재 세션 (5시간)', u.session); if (s) body.appendChild(s);
+  // 주간: all models 먼저, 그 외 모델(Fable 등) 이어서
+  for (const w of (u.weeks || [])) {
+    const label = /all models/i.test(w.model) ? '이번 주 (전체)' : '이번 주 (' + w.model + ')';
+    const g = gaugeHtml(label, w); if (g) body.appendChild(g);
+  }
+  // 상세(24h/7d) — raw에서 인사이트 줄을 그대로 보여준다(간단·안정)
+  for (const sp of (u.spans || [])) {
+    const blk = document.createElement('div'); blk.className = 'ublock';
+    const h = document.createElement('h4'); h.textContent = sp.span === '24h' ? '최근 24시간' : '최근 7일';
+    const big = document.createElement('div'); big.className = 'big';
+    big.textContent = `${sp.requests} 요청 · ${sp.sessions} 세션`;
+    blk.append(h, big);
+    body.appendChild(blk);
+  }
+}
 
 // ── 세션 펫 (실행 중인 다른 claude 세션마다 하나씩) ──────────
 const SPET_SIZE = 66;
@@ -809,14 +877,15 @@ function renderProcs() {
     dot.className = 'dot' + (mode === 'working' ? ' busy' : '') + (mode === 'waiting' ? ' wait' : '');
     const info = document.createElement('div');
     info.className = 'p-info';
-    const cwdEl = document.createElement('div');
-    cwdEl.className = 'p-cwd';
-    cwdEl.title = cwd;
-    cwdEl.textContent = short;
+    // 제목 = 세션 이름(myproj-e4 등), 없으면 cwd basename. cwd 전체는 hover 툴팁으로.
+    const titleEl = document.createElement('div');
+    titleEl.className = 'p-cwd';
+    titleEl.title = cwd;   // 마우스 올리면 전체 cwd
+    titleEl.textContent = p.sessionName || short;
     const meta = document.createElement('div');
     meta.className = 'p-meta';
     meta.textContent = `PID ${p.pid} · CPU ${p.cpu.toFixed(1)}% · ${p.etime}${p.tty ? ' · ' + p.tty : ''} · ${label}`;
-    info.append(cwdEl, meta);
+    info.append(titleEl, meta);
     div.append(dot, info);
 
     if (cwd) {
@@ -881,9 +950,13 @@ function openSendRow(wrap, p, name, cwd) {
 }
 
 $('#refresh-procs').addEventListener('click', refreshProcs);
+$('#refresh-usage').addEventListener('click', () => refreshUsage(true));
 setInterval(refreshProcs, 1000);
 // docs/form 폼 감지 (2초 주기) — 각 세션펫이 자기 cwd의 대기 폼을 확인
 setInterval(() => { for (const sp of sessionPets.values()) sp.checkForms(); }, 2000);
+// 사용량 HP바: 시작 시 1회 + 5분마다 갱신 (/usage는 콜드 스타트라 자주 안 부름)
+refreshUsage(false);
+setInterval(() => refreshUsage(false), 300000);
 
 // ── 명령 실행 (claude -p) ────────────────────────────────────
 const sessions = new Map(); // id -> { el, pre, prompt, done }
