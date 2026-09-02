@@ -474,6 +474,21 @@
   .ublock ul { margin: 6px 0 0; padding-left: 16px; }
   .ublock li { font-size: 12px; color: #cbb; margin: 2px 0; }
 
+  /* 커스텀 툴팁 (Electron 투명 오버레이에선 native title 툴팁이 안 떠서 직접 구현) */
+  #tooltip {
+    position: absolute; z-index: 50;
+    background: rgba(20,19,18,.97);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12px; color: #eee;
+    max-width: 380px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+    pointer-events: none; display: none;
+  }
+  #tooltip.show { display: block; }
+
   /* 잡담 */
   #chat-log {
     display: flex; flex-direction: column; gap: 8px;
@@ -519,6 +534,8 @@
     <div id="sprite-wrap"><img id="sprite" alt="pet"></div>
     <div id="badge"></div>
   </div>
+
+  <div id="tooltip"></div>
 
   <div id="panel" class="interactive">
     <div id="panel-header">

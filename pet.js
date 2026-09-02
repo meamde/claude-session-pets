@@ -111,6 +111,27 @@ window.addEventListener('resize', () => {
   for (const sp of sessionPets.values()) sp.x = clampXW(sp.x, SPET_SIZE);
 });
 
+// ── 커스텀 툴팁 ([data-tip] 요소 hover) ──────────────────────
+// Electron 투명 오버레이 창에선 native title 툴팁이 안 떠서 직접 구현.
+const tooltipEl = $('#tooltip');
+function showTip(text, x, y) {
+  tooltipEl.textContent = text;
+  tooltipEl.classList.add('show');
+  // 커서 아래·오른쪽에 배치, 화면 밖으로 안 나가게 클램프
+  const w = tooltipEl.offsetWidth, h = tooltipEl.offsetHeight;
+  let px = x + 12, py = y + 16;
+  if (px + w > window.innerWidth - 6) px = window.innerWidth - w - 6;
+  if (py + h > window.innerHeight - 6) py = y - h - 8;
+  tooltipEl.style.left = Math.max(6, px) + 'px';
+  tooltipEl.style.top = Math.max(6, py) + 'px';
+}
+function hideTip() { tooltipEl.classList.remove('show'); }
+document.addEventListener('mousemove', (e) => {
+  const tipEl = e.target.closest && e.target.closest('[data-tip]');
+  if (tipEl && tipEl.dataset.tip) showTip(tipEl.dataset.tip, e.clientX, e.clientY);
+  else hideTip();
+}, true);
+
 // ── 마우스 통과 제어 ─────────────────────────────────────────
 // 창 전체가 화면을 덮으므로, 인터랙티브 요소 위에서만 마우스를 받는다.
 let ignoring = true;
@@ -877,10 +898,10 @@ function renderProcs() {
     dot.className = 'dot' + (mode === 'working' ? ' busy' : '') + (mode === 'waiting' ? ' wait' : '');
     const info = document.createElement('div');
     info.className = 'p-info';
-    // 제목 = 세션 이름(myproj-e4 등), 없으면 cwd basename. cwd 전체는 hover 툴팁으로.
+    // 제목 = 세션 이름(myproj-e4 등), 없으면 cwd basename. cwd 전체는 커스텀 툴팁(data-tip)으로.
     const titleEl = document.createElement('div');
     titleEl.className = 'p-cwd';
-    titleEl.title = cwd;   // 마우스 올리면 전체 cwd
+    titleEl.dataset.tip = cwd;   // 마우스 올리면 전체 cwd (아래 위임 핸들러가 표시)
     titleEl.textContent = p.sessionName || short;
     const meta = document.createElement('div');
     meta.className = 'p-meta';
