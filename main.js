@@ -700,6 +700,8 @@ async function computeProcs() {
       }
       // 펫이 "자기 세션"을 식별하도록 session_id를 실어준다(폼을 세션 단위로 매칭하기 위함)
       p.sessionId = (s && s.sessionId) || (hookRows[i] && hookRows[i].sessionId) || null;
+      // 크로스세션 세션 이름(myproj-e4 등) — 같은 폴더 다중 세션 구분용 펫 라벨. ~/.claude/sessions/<pid>.json에 있음.
+      p.sessionName = readSessionName(p.pid);
       p.hookState = hs ? hs.state : null;
       p.hookAge = hs ? hs.ageSec : Infinity;
       p.hookTask = hs ? hs.task : null;
@@ -715,6 +717,13 @@ ipcMain.handle('list-claude-procs', computeProcs);
 //   auth:    {"type":"auth","token":"<peerToken>"}   (peerToken은 ~/.claude/sessions/<pid>.*.key)
 //   message: {"msgV":1,"type":"user","message":{"role":"user","content":"<text>"},"session_id":"<대상sid>","priority":"next"}
 const net = require('net');
+// ~/.claude/sessions/<pid>.json에서 크로스세션 세션 이름(name)을 읽는다 (예: "myproj-e4").
+function readSessionName(pid) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(HOOK_DIR(), 'sessions', pid + '.json'), 'utf8'));
+    return j.name || null;
+  } catch { return null; }
+}
 function readPeerToken(pid) {
   try {
     const dir = path.join(HOOK_DIR(), 'sessions');

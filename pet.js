@@ -668,6 +668,7 @@ const QUIET_MS = 25000;    // (폴백) 이만큼 CPU 시간이 멈춰있어야 �
 const DONE_DEBOUNCE_MS = 3000; // 유휴가 이 시간 이상 지속되면 완료 확정 (벽시계 기준, 깜빡임 방지)
 
 function procName(p) {
+  if (p.sessionName) return p.sessionName;   // 크로스세션 세션 이름(myproj-e4 등) — 같은 폴더 다중 세션 구분
   if (p.cwd) return p.cwd.split('/').filter(Boolean).pop();
   return 'PID ' + p.pid;
 }
