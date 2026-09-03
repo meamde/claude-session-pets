@@ -3,6 +3,25 @@
 macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시해 세션마다 작은 펫을 띄우고,
 작업 상태·현재 작업 내용을 말풍선으로 보여준다. 기능 개요는 README.md 참고.
 
+## ⚠️ 공개 저장소 — 회사/개인정보 유출 금지 (커밋·푸시 전 필수 점검)
+
+이 저장소는 **공개(public) GitHub 저장소**(`git@github.com:meamde/claude-session-pets.git`)다.
+파일 내용뿐 아니라 **커밋 메시지 본문까지** 그대로 공개된다. 아래는 코드·주석·문서·커밋 메시지 **어디에도** 넣지 말 것:
+
+- **회사 관련 이름**: 회사명, 사내 프로젝트/모듈/서비스/저장소명, 사내 세션 이름 등. (실측 버그 사례를 적을 때도 실제 사내 이름을 쓰지 말고 **중립 예시**(`myorg`, `myproj`, `myproj-e4`, `sampleproj` 등)로 치환.)
+- **개인정보**: 회사 이메일(사내 도메인 주소), 실명+연락처, 하드코딩된 홈경로(`/Users/<사용자명>/...` → `os.homedir()`/`~`로), 주민번호·계좌·카드 등.
+- **시크릿**: API 키·토큰·비밀번호·인증서 등. (소켓 `peerToken`처럼 **런타임에 로컬 파일에서 읽는 로직**은 무방하지만, 값 자체를 하드코딩하지 말 것.)
+
+**커밋·푸시 전 자가 점검**(예시 명령):
+```bash
+git ls-files | grep -vE 'package-lock.json|icon.icns' | xargs grep -niE "회사명|사내프로젝트명|사용자실명|/Users/[a-z]|token|secret|password" 2>/dev/null
+git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메시지 본문도 점검
+```
+이미 커밋/푸시된 뒤 발견되면: 현재 파일 수정만으론 부족하고 **히스토리 재작성 + force push**가 필요하다(과거 커밋의 파일·메시지에 남아 있으므로).
+- 방법: `git filter-branch --tree-filter '<파일 perl 치환>' --msg-filter '<메시지 perl 치환>' -- --all` 후 `refs/original/` 삭제 → `git push --force`.
+- ⚠️ 치환 시 **일반 영어 단어 오염 주의**: 예로 `package-lock.json`의 `"purchased"`(회사와 무관)를 건드리지 않도록 `purchase(?!d)` 같은 정규식 경계를 쓸 것.
+- force push 후에도 GitHub가 옛 커밋 객체를 한동안 dangling으로 캐시할 수 있으니(브랜치엔 안 보임), 민감도가 높으면 저장소 재생성/지원 요청까지 고려.
+
 ## 파일 구조
 
 - `main.js` — Electron 메인. 프로세스 감시(ps/lsof), 상태 훅 설치/업그레이드, 트랜스크립트 판독, tty 명령 주입, `claude -p` 실행
@@ -123,8 +142,11 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
   - 왜 공용 폴더인가: cwd/docs/form에 두면, 한 세션이 다른 세션의 하위 폴더에서 작업할 때 폼이 엉뚱한 폴더에 생겨 그 폴더의 다른 세션 펫이 가로채고 배달도 틀림(실측 버그: myorg 세션 폼이 myproj에 생겨 myproj-e4가 받음). 공용 폴더 + sessionId 태깅으로 원천 해결.
   - **⚠️ 공용 폴더 경로 제약(오래 헤맴, 실측)**: ① `~/.claude` 아래는 Claude Code가 '민감 경로'로 막아 Claude의 파일 쓰기 거부. ② `acceptEdits`는 cwd 하위만 자동 승인 → 프로젝트 밖 공용 폴더는 권한 거부. → **앱이 `settings.json` `permissions.allow`에 규칙 추가로 해결.** 규칙 두 함정: **(a) `Write(...)`가 아니라 `Edit(...)`** (Edit 규칙이 Write 포함 모든 파일 편집 도구를 커버, Write 경로 규칙은 무시됨). **(b) 절대경로는 이중 슬래시 `//`** (단일 `/`는 settings 위치 기준 앵커). 최종: `Edit(//Users/…/Library/claude-session-pets-forms/**)`. 그리고 **경로에 공백 있으면 glob 매칭 실패**라 `Application Support`(공백) 대신 `~/Library/claude-session-pets-forms`(공백 없음) 사용.
 - **감지**: 각 `SessionPet`이 2초마다 `window.pet.listForms(sp.sessionId)` → 공용 폴더에서 **그 sessionId 폼만** 반환. `sp.sessionId`는 `list-claude-procs`가 실어줌(트랜스크립트/훅 매칭). sessionId 모르면 감지 안 함.
+- **⭐ 폼 우선순위(done/wait보다 위)**: 폼 생성 후 턴이 끝나면 detectEvents가 `setDone()`을 불러 "작업 완료!"가 폼 말풍선을 덮던 버그가 있었다(폴링과 checkForms가 별개라, `setDone`이 `sticky`만 'done'으로 바꾸고 `pendingForm`은 남아 checkForms의 `id` 비교가 재표시를 막음). → **`setDone`/`setWaiting`은 `pendingForm`이 있으면 즉시 return**(폼 우선), **`checkForms`는 폼이 있는데 `sticky!=='form'`(덮임)이면 폼 말풍선 복원**, `landRestore`도 form→wait로 복귀. 즉 폼이 존재하는 한 항상 📋가 이긴다.
 - **표시/제출**: 클릭 → `open-form(id)` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 공용 폴더에 `<id>.html` 저장 후 폼 창 로드. cwd·id는 HTML에 직접 박음(CTX).
   [전송] → `submit-form(id)` IPC 라우팅 우선순위: ① 폼의 `sessionName` → 그 이름으로 크로스세션 relay(정확+터미널 표시) ② 폼의 `sessionId` → 헤드리스 `claude -p -r <sid>`(정확, 터미널 X) ③ 구버전 → cwd로 `resolvePeerName` relay/헤드리스 폴백. claude 실행 cwd는 폼의 `cwd` 필드. 완료 시 공용 폴더 `done/`으로 이동(+`.answer.json`).
+- **작업 취소 버튼**: 폼을 보니 그 작업 자체가 불필요했던 경우를 위해 footer에 **[작업 취소]**(빨강). 누르면 `submit-form`에 `{cancel:true}` → main이 답변 대신 `formatCancel(form)`(진행 중 작업 중단·대기 지시)을 **같은 라우팅으로 세션에 전달**. `done/`엔 `{__cancelled:true}`로 기록. footer는 [닫기](창만 닫음)·[작업 취소]·[전송하고 작업 진행] 3버튼.
+- **전송 후 자동 닫기**: `form-done`(code 0) 수신 시 성공 문구를 잠깐 보여준 뒤 **1.2초 후 폼 창 자동 close**(`sessionForm.cancel()`=close-form). 실패 시엔 닫지 않고 입력 보존(초안 localStorage 유지) + [다시 전송].
 - **SendMessage는 이름만 받고 session_id는 못 받는다**(도구 제약). 그래서 정확 배달 = 헤드리스(sid) 또는 "폼에 기록된 이름"으로 relay. 이 둘을 조합.
 
 ### 폼 JSON 스키마

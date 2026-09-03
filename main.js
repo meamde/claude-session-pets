@@ -1125,6 +1125,8 @@ function renderFormHtml(form, ctx) {
   #send{background:var(--accent);color:#1c1b1a;border-color:var(--accent);flex:1}
   #send:disabled{opacity:.5;cursor:default}
   #cancel{background:transparent;color:var(--muted)}
+  #cancelwork{background:transparent;color:#e0796a;border-color:rgba(217,119,87,.5)}
+  #cancelwork:disabled{opacity:.5;cursor:default}
   #progress{display:none;padding:12px 22px 100px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cfc3b6}
   #progress.show{display:block}
   .done{color:#7bbf6a;font-weight:700}
@@ -1135,6 +1137,7 @@ function renderFormHtml(form, ctx) {
   <pre id="progress"></pre>
   <footer>
     <button id="cancel">닫기</button>
+    <button id="cancelwork">작업 취소</button>
     <button id="send">전송하고 작업 진행 →</button>
   </footer>
 <script>
@@ -1196,12 +1199,29 @@ function renderFormHtml(form, ctx) {
     }
   });
   document.getElementById('cancel').addEventListener('click', () => window.sessionForm.cancel());
+  // '작업 취소': 이 작업이 필요 없었을 때, 세션에 취소를 전달해 진행 중이던 작업을 멈추게 한다
+  const cw = document.getElementById('cancelwork');
+  cw.addEventListener('click', async () => {
+    cw.disabled = true; send.disabled = true; cw.textContent = '취소 전달 중…';
+    prog.classList.add('show'); prog.textContent = '작업 취소를 세션에 전달 중…\\n';
+    let r; try { r = await window.sessionForm.submit({ id: CTX.id, cancel: true }); }
+    catch (e) { r = { ok:false, error: String((e && e.message) || e) }; }
+    if (!r || !r.ok) {
+      prog.textContent += '\\n[오류] ' + ((r && r.error) || '전송 실패');
+      cw.disabled = false; send.disabled = false; cw.textContent = '작업 취소';
+    }
+  });
   window.sessionForm.onOutput(d => { prog.classList.add('show'); prog.textContent += d.chunk; prog.scrollIntoView({block:'end'}); });
   window.sessionForm.onDone(d => {
-    if (d.code === 0) { try { localStorage.removeItem(DKEY); } catch (e) {} }
-    prog.textContent += '\\n\\n' + (d.code === 0
-      ? '✅ 작업을 세션에 전달했습니다. 이 창은 닫아도 됩니다.'
-      : '⚠️ 종료 코드 ' + d.code + (d.error ? ' — ' + d.error : '') + '\\n(입력은 저장돼 있어요.)');
+    if (d.code === 0) {
+      try { localStorage.removeItem(DKEY); } catch (e) {}
+      prog.textContent += '\\n\\n✅ 세션에 전달했습니다. 잠시 후 이 창이 닫힙니다…';
+      prog.scrollIntoView({block:'end'});
+      setTimeout(() => window.sessionForm.cancel(), 1200); // cancel() = 창 닫기(close-form)
+    } else {
+      prog.textContent += '\\n\\n⚠️ 종료 코드 ' + d.code + (d.error ? ' — ' + d.error : '') + '\\n(입력은 저장돼 있어요.)';
+      send.disabled = false; send.textContent = '다시 전송';
+    }
   });
 </script>
 </body></html>`;
@@ -1239,6 +1259,17 @@ function formatAnswers(form, answers) {
     lines.push(`  → 사용자 응답: ${val}`);
     lines.push('');
   }
+  return lines.join('\n');
+}
+
+// '작업 취소' 선택 시 세션에 보낼 문구: 진행 중이던 작업을 멈추게 한다
+function formatCancel(form) {
+  const lines = [
+    "사용자가 이 입력 폼을 검토한 뒤 '작업 취소'를 선택했습니다.",
+    '요청했던(또는 진행 중이던) 작업이 실제로는 필요 없다고 판단한 것입니다.',
+    '지금 하던 작업을 중단하고, 이 건과 관련된 추가 변경은 하지 말고 대기해 주세요. 이 작업은 취소되었습니다.',
+  ];
+  if (form.title) { lines.push(''); lines.push(`[취소된 폼: ${form.title}]`); }
   return lines.join('\n');
 }
 
@@ -1299,11 +1330,12 @@ function resolvePeerName(cwd) {
   });
 }
 
-ipcMain.handle('submit-form', async (_e, { id, answers }) => {
+ipcMain.handle('submit-form', async (_e, { id, answers, cancel }) => {
   let form;
   try { form = JSON.parse(fs.readFileSync(path.join(formsDir(), id + '.json'), 'utf8')); }
   catch (err) { return { ok: false, error: '폼 파일을 읽지 못했어요: ' + String(err.message || err) }; }
-  const prompt = formatAnswers(form, answers);
+  const prompt = cancel ? formatCancel(form) : formatAnswers(form, answers);
+  const doneAnswers = cancel ? { __cancelled: true } : answers; // done/으로 남길 기록
   const cwd = (form.cwd && fs.existsSync(form.cwd)) ? form.cwd : os.homedir(); // claude 실행 폴더 = 폼에 기록된 작업 폴더
   const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
 
@@ -1319,7 +1351,7 @@ ipcMain.handle('submit-form', async (_e, { id, answers }) => {
     child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
     child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
     child.on('close', (code) => {
-      if (code === 0) { markFormDone(id, answers); send('form-output', { chunk: `\n✅ ‘${name}’ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n` }); }
+      if (code === 0) { markFormDone(id, doneAnswers); send('form-output', { chunk: `\n✅ ‘${name}’ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n` }); }
       send('form-done', { code, mode: 'relay', name });
     });
     child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
@@ -1332,7 +1364,7 @@ ipcMain.handle('submit-form', async (_e, { id, answers }) => {
     catch (err) { return { ok: false, error: String(err.message || err) }; }
     child.stdout.on('data', d => send('form-output', { chunk: d.toString() }));
     child.stderr.on('data', d => send('form-output', { chunk: d.toString(), stderr: true }));
-    child.on('close', (code) => { if (code === 0) markFormDone(id, answers); send('form-done', { code, mode: 'headless' }); });
+    child.on('close', (code) => { if (code === 0) markFormDone(id, doneAnswers); send('form-done', { code, mode: 'headless' }); });
     child.on('error', (err) => send('form-done', { code: -1, error: String(err.message || err) }));
     return { ok: true, mode: 'headless', sessionId: sid };
   };
@@ -1342,7 +1374,7 @@ ipcMain.handle('submit-form', async (_e, { id, answers }) => {
     send('form-output', { chunk: '세션에 전달 중…\n' });
     const ok = await injectBySessionId(form.sessionId, prompt);
     if (ok) {
-      markFormDone(id, answers);
+      markFormDone(id, doneAnswers);
       send('form-output', { chunk: '✅ 세션 터미널로 전달했어요. 그 터미널에서 이어집니다.\n' });
       send('form-done', { code: 0, mode: 'socket' });
       return { ok: true, mode: 'socket' };

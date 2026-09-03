@@ -570,7 +570,8 @@ class SessionPet {
 
   // 낙하/드래그가 끝난 뒤 현재 모드에 맞는 상태로 복귀
   landRestore() {
-    const back = this.sticky === 'done' ? 'done'
+    const back = this.sticky === 'form' ? 'wait'
+      : this.sticky === 'done' ? 'done'
       : this.sticky === 'wait' ? 'wait'
       : this.working ? 'work'
       : 'idle';
@@ -608,7 +609,8 @@ class SessionPet {
     try { forms = await window.pet.listForms(this.sessionId); } catch { return; }
     const f = forms && forms[0];
     if (f) {
-      if (!this.pendingForm || this.pendingForm.id !== f.id) {
+      // 폼은 done/wait보다 우선. 새 폼이거나, 완료·유휴 등이 폼 말풍선을 덮었으면(sticky!=='form') 다시 폼으로 복원.
+      if (!this.pendingForm || this.pendingForm.id !== f.id || this.sticky !== 'form') {
         this.pendingForm = f;
         this.sticky = 'form';
         this.working = false;
@@ -641,6 +643,7 @@ class SessionPet {
   }
   setDone() {
     if (this.state === 'bye') return;
+    if (this.pendingForm) return;   // 폼 입력 대기 중이면 '작업 완료'로 덮지 않는다 (폼 우선)
     this.sticky = 'done';
     this.working = false;
     if (!this.inAir()) this.enter('done', 0);
@@ -648,6 +651,7 @@ class SessionPet {
   }
   setWaiting() {
     if (this.state === 'bye') return;
+    if (this.pendingForm) return;   // 폼이 이미 '입력 필요'를 대표하므로 폼 우선
     this.sticky = 'wait';
     this.working = false;
     if (!this.inAir()) this.enter('wait', 0);
