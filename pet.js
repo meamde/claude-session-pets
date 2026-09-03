@@ -464,7 +464,7 @@ class SessionPet {
       setTimeout(() => this.restoreBubble(), 2200);
     };
     let r;
-    try { r = await window.pet.focusSession(this.pid, this.tty); }
+    try { r = await window.pet.focusSession(this.pid, this.tty, this.key); }
     catch { flash('앞으로 못 가져왔어요 😿'); return; }
     if (r.ok) flash('여기예요! 👀');
     else if (r.error === 'automation')
@@ -533,7 +533,7 @@ class SessionPet {
       this._grab = { x: e.clientX - this.x, y: e.clientY - this.y };
       this._moved = false;
     });
-    el.addEventListener('dblclick', () => this.assignImage());
+    el.addEventListener('dblclick', () => this.focusWindow());
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); this.showMenu(e); });
     el.addEventListener('dragover', (e) => e.preventDefault());
     el.addEventListener('drop', (e) => {

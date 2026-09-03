@@ -947,7 +947,31 @@ on run argv
   return "notfound"
 end run`;
 
-ipcMain.handle('focus-session', async (_e, { pid, tty }) => {
+// IntelliJ/VS Code 등 창이 여러 개인 GUI 앱: 창 제목에 프로젝트 폴더명이 들어가므로,
+// 그 이름을 포함하는 창을 System Events로 찾아 AXRaise(정확히 해당 프로젝트 창을 앞으로).
+// (앱 통째 activate와 달리 다른 프로젝트 창이 떠 있어도 정확한 창을 고른다. Accessibility 권한 필요.)
+const GUI_WINDOW_FOCUS = `
+on run argv
+  set appName to item 1 of argv
+  set needle to item 2 of argv
+  tell application "System Events"
+    if not (exists process appName) then return "noproc"
+    tell process appName
+      set frontmost to true
+      repeat with w in windows
+        try
+          if (name of w) contains needle then
+            perform action "AXRaise" of w
+            return "ok"
+          end if
+        end try
+      end repeat
+    end tell
+  end tell
+  return "notfound"
+end run`;
+
+ipcMain.handle('focus-session', async (_e, { pid, tty, cwd }) => {
   const host = await findHostApp(pid);
   const dev = tty ? (tty.startsWith('/dev/') ? tty : '/dev/' + tty) : null;
 
@@ -967,8 +991,18 @@ ipcMain.handle('focus-session', async (_e, { pid, tty }) => {
     if (r.err && /not authoriz|1743|-1743/i.test(r.se)) return { ok: false, error: 'automation' };
   }
 
-  // 그 외(IntelliJ/VS Code 등): 앱 번들을 앞으로
+  // 그 외(IntelliJ/VS Code 등): 프로젝트 폴더명으로 정확한 창을 먼저 raise 시도
   if (host) {
+    const base = cwd && !cwd.startsWith('pid:') ? path.basename(cwd) : null;
+    if (base) {
+      const r = await new Promise((res) =>
+        execFile('osascript', ['-e', GUI_WINDOW_FOCUS, host.appName, base], { timeout: 8000 }, (err, out, se) =>
+          res({ err, out: (out || '').trim(), se: String(se || '') })));
+      if (!r.err && r.out === 'ok') return { ok: true, app: host.appName, window: base };
+      if (r.err && /not authoriz|1743|-1743/i.test(r.se)) return { ok: false, error: 'automation' };
+      // notfound/noproc(제목에 폴더명 없음 등) → 아래 앱 통째 activate로 폴백
+    }
+    // 폴백: 앱 번들을 앞으로 (특정 창 매칭 실패 시)
     const r = await new Promise((res) =>
       execFile('open', ['-a', host.bundlePath], (err) => res(err)));
     if (!r) return { ok: true, app: host.appName };

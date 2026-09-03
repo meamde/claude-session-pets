@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('pet', {
   sendToTty: (tty, text) => ipcRenderer.invoke('send-to-tty', { tty, text }),
   sendToSession: (cwd, sessionId, text) => ipcRenderer.invoke('send-to-session', { cwd, sessionId, text }),
   listInjectableTtys: () => ipcRenderer.invoke('list-injectable-ttys'),
-  focusSession: (pid, tty) => ipcRenderer.invoke('focus-session', { pid, tty }),
+  focusSession: (pid, tty, cwd) => ipcRenderer.invoke('focus-session', { pid, tty, cwd }),
 
   chatClaude: (opts) => ipcRenderer.invoke('chat-claude', opts),
   runClaude: (opts) => ipcRenderer.invoke('run-claude', opts),

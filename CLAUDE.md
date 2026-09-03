@@ -69,7 +69,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - 말풍선 갱신은 **task가 바뀔 때만** (detectEvents에서 `t.task !== task` 비교)
 - 드래그 후 공중에서 놓으면 `fall` 상태로 중력 낙하(GRAVITY 공유), 착지 시 `landRestore()`가 모드에 맞는 상태로 복귀
 - 드래그/낙하 중(`inAir()`)에는 setWorking/setDone 등이 상태를 바꾸지 않고 말풍선·플래그만 갱신
-- 임시 말풍선(우클릭 "여기예요!", 더블클릭 이미지 변경) 후에는 `restoreBubble()`로 원래 말풍선 복원
+- 임시 말풍선(우클릭/더블클릭 "여기예요!") 후에는 `restoreBubble()`로 원래 말풍선 복원
 - 세션펫 말풍선(.sbubble)은 최대 250px에서 줄바꿈 (자르지 않음 — "…" 금지가 사용자 요구사항)
 - **좌우 반전(`this.flip`)**: `render()`에서 `facing = (dir===1) !== flip ? 1 : -1`.
   요소 3층 구조로 회전 피봇과 반전을 분리한다:
@@ -107,7 +107,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
   있으면 기본 캐릭터 대신 그게 뜬다. 기본 캐릭터 확인은 우클릭 → "기본 모습으로"
 - **우클릭 이미지 설정 메뉴(`showMenu`)**: 세션펫 우클릭 시 컨텍스트 메뉴 (`.spet-menu`, body 직속, 화면당 1개).
   항목: 창 앞으로 가져오기(기존 우클릭 동작 흡수) / 이미지 변경… / 좌우 반전(토글) / 기본 모습으로(`deleteSessionImage`+CLAUDE_ICON 복귀).
-  바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. 더블클릭(이미지 변경)·드롭(이미지 지정)은 그대로 유지
+  바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. **더블클릭=창 앞으로 가져오기(`focusWindow`)**, 드롭(이미지 지정)은 유지. (이미지 변경은 우클릭 메뉴·드롭으로만)
 
 ## 사용량 표시 (/usage) — 메인펫 HP바 + 사용량 탭
 
