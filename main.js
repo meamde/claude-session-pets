@@ -1011,6 +1011,15 @@ ipcMain.handle('focus-session', async (_e, { pid, tty, cwd }) => {
   return { ok: false, error: 'nohost' };
 });
 
+// 세션 작업 폴더를 Finder에서 연다
+ipcMain.handle('open-folder', (_e, cwd) => {
+  try {
+    if (!cwd || !fs.existsSync(cwd)) return { ok: false, error: 'nofolder' };
+    execFile('open', [cwd], () => {});
+    return { ok: true };
+  } catch (err) { return { ok: false, error: String(err.message || err) }; }
+});
+
 // ── 명령 실행: claude -p 스트리밍 ────────────────────────────
 
 // GUI로 실행되면 PATH에 ~/.local/bin이 없을 수 있어 바이너리를 직접 찾는다.

@@ -1,6 +1,6 @@
 {
   "name": "claude-session-pets",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "macOS desktop pets that watch your running Claude CLI sessions",
   "main": "main.js",
   "scripts": {

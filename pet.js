@@ -478,6 +478,17 @@ class SessionPet {
     else flash('앞으로 못 가져왔어요 😿');
   }
 
+  // 이 세션의 작업 폴더(cwd)를 Finder에서 연다
+  async openFolder() {
+    const cwd = this.key && !this.key.startsWith('pid:') ? this.key : null;
+    if (!cwd) { this.showBubble('작업 폴더를 몰라요 🤔'); setTimeout(() => this.restoreBubble(), 1800); return; }
+    let r;
+    try { r = await window.pet.openFolder(cwd); } catch { r = { ok: false }; }
+    if (r && r.ok) { this.showBubble('📁 폴더 열었어요'); }
+    else { this.showBubble('폴더를 못 열었어요 😿'); }
+    setTimeout(() => this.restoreBubble(), 1600);
+  }
+
   // 우클릭 이미지 설정 메뉴
   showMenu(e) {
     closeSpetMenu();
@@ -497,6 +508,7 @@ class SessionPet {
     };
     const sep = () => { const s = document.createElement('div'); s.className = 'spet-menu-sep'; m.appendChild(s); };
     item('👀', '창 앞으로 가져오기', () => this.focusWindow());
+    item('📁', 'Finder에서 작업 폴더 열기', () => this.openFolder());
     sep();
     item('🖼️', '이미지 변경…', () => this.assignImage());
     item(this.flip ? '✓' : '↔️', '좌우 반전', () => this.toggleFlip());
