@@ -313,6 +313,38 @@
     100% { transform: translateY(0); }
   }
 
+  /* ── 알림 강조: 헤일로 파동(크게) + 점프 (done/wait/form 공통) ── */
+  .spet .shalo { position: absolute; left: 33px; bottom: 30px; width: 0; height: 0; z-index: 0; pointer-events: none; display: none; }
+  .spet.alerting .shalo { display: block; }
+  body.no-halo .spet.alerting .shalo { display: none; }   /* 설정에서 링 끄면 숨김 */
+  .spet.alerting .shalo i { position: absolute; left: 0; top: 0; width: 104px; height: 104px; margin: -52px 0 0 -52px;
+    border-radius: 50%; border: 3.5px solid var(--halo, #5bb85c); opacity: 0; }
+  /* 빰-빠바밤: 3개 링을 짧은 간격으로 연달아 쏘고(0 / .16s / .32s), 나머지 구간은 쉰다 */
+  .spet.alerting .shalo i:nth-child(1) { animation: sp-ripple 2.1s ease-out infinite; }
+  .spet.alerting .shalo i:nth-child(2) { animation: sp-ripple 2.1s ease-out infinite .16s; }
+  .spet.alerting .shalo i:nth-child(3) { animation: sp-ripple 2.1s ease-out infinite .32s; }
+  @keyframes sp-ripple {
+    0%  { opacity: .9; transform: scale(.28); }
+    6%  { opacity: .85; }
+    40% { opacity: 0; transform: scale(5.5); }
+    100% { opacity: 0; transform: scale(5.5); }   /* 40~100%는 쉼 (리듬의 정박) */
+  }
+  .spet.alert-done { --halo: #5bb85c; }
+  .spet.alert-wait { --halo: #e6952f; }
+  /* 알림 중엔 점프(스케일 레이어) — done/wait/form 모두 통통 튀어 시선을 끈다 */
+  .spet.alerting .sbounce { animation: sp-jump 1.6s cubic-bezier(.28,.84,.42,1) infinite; }
+
+  /* ── 에스컬레이션: 오래 미확인 시 화면을 어둡게(딤) → 알림 펫이 스포트라이트처럼 부각 ──
+     투명 오버레이라 z-index:-1이면 배경(데스크탑)만 어두워지고 펫(z:9)·메인펫·패널은 그대로 위에 밝게 뜬다. */
+  #alert-dim { position: fixed; inset: 0; pointer-events: none; z-index: -1; background: rgba(0,0,0,.5);
+    opacity: 0; transition: opacity .8s ease; }
+  #alert-dim.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .spet.alerting .shalo i { animation: none; opacity: .4; transform: scale(3.2); }
+    .spet.alerting .sbounce { animation: none; }
+    #alert-dim { transition: none; }
+  }
+
   /* ── 패널 ───────────────────────────────── */
   #panel {
     position: absolute;
@@ -607,6 +639,17 @@
         <label>좌우 반전</label>
         <input type="checkbox" id="flip-check">
         <span class="hint">이미지가 왼쪽을 보고 있으면 체크</span>
+      </div>
+      <div class="row" style="margin-top:6px"><span class="hint" style="flex:1;font-weight:700;color:#d8cdbf">완료·입력 알림 강조</span></div>
+      <div class="row">
+        <label>알림 파동(링)</label>
+        <input type="checkbox" id="alert-halo" checked>
+        <span class="hint">완료·입력 필요 시 펫 주위로 링이 퍼집니다</span>
+      </div>
+      <div class="row">
+        <label>스포트라이트</label>
+        <input type="checkbox" id="alert-spotlight" checked>
+        <span class="hint">오래 확인 안 하면 화면을 어둡게 해 강조합니다</span>
       </div>
       <div class="sep"></div>
       <div class="row">

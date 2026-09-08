@@ -70,6 +70,11 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - 드래그 후 공중에서 놓으면 `fall` 상태로 중력 낙하(GRAVITY 공유), 착지 시 `landRestore()`가 모드에 맞는 상태로 복귀
 - 드래그/낙하 중(`inAir()`)에는 setWorking/setDone 등이 상태를 바꾸지 않고 말풍선·플래그만 갱신
 - 임시 말풍선(우클릭/더블클릭 "여기예요!") 후에는 `restoreBubble()`로 원래 말풍선 복원
+- **알림 강조 (완료·입력필요·폼 공통)**: `setAlert('done'|'wait')`가 `.alerting`+`.alert-done/-wait`(색) 클래스 부여, `clearAlert()`가 해제. setDone/setWaiting/checkForms(폼)에서 setAlert, setWorking/goIdle/farewell에서 clearAlert.
+  - **헤일로 링(빰-빠바밤)**: `.shalo` 안 `<i>` 3개가 `sp-ripple`(scale .28→5.5)을 delay 0/.16/.32s로 연달아 → 3연타 후 정박 쉼(주기 2.1s). 색 `--halo`(done=초록/wait·form=주황).
+  - **점프**: `.spet.alerting .sbounce`에 `sp-jump`(done뿐 아니라 wait/form도 점프).
+  - **에스컬레이션 스포트라이트**: `alertSince`(알림 시작 시각) 기록 → `updateAlertDim()`(1초 간격)이 `now-alertSince > ESCALATE_MS`(22초)면 `#alert-dim`.on. **딤은 `z-index:-1`** — 투명 오버레이라 배경(데스크탑)만 어두워지고 펫(z:9)·메인펫·패널은 그대로 위에 밝게 뜬다.
+  - **설정 토글**: `S.haloOn`(`localStorage['alertHalo']`)·`S.spotlightOn`(`alertSpotlight`), ⚙️ 설정 탭. 링 off는 `body.no-halo`로 `.shalo` 숨김, 스포트라이트 off는 `updateAlertDim`에서 딤 스킵. 둘 다 기본 on.
 - 세션펫 말풍선(.sbubble)은 최대 250px에서 줄바꿈 (자르지 않음 — "…" 금지가 사용자 요구사항)
 - **좌우 반전(`this.flip`)**: `render()`에서 `facing = (dir===1) !== flip ? 1 : -1`.
   요소 3층 구조로 회전 피봇과 반전을 분리한다:

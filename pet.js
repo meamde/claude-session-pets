@@ -15,6 +15,8 @@ const S = {
   size: Number(localStorage.getItem('petSize')) || 128,
   flip: localStorage.getItem('petFlip') === '1',
   bgRemove: localStorage.getItem('bgRemove') !== '0',
+  haloOn: localStorage.getItem('alertHalo') !== '0',        // 알림 파동(링) 표시
+  spotlightOn: localStorage.getItem('alertSpotlight') !== '0', // 오래 미확인 시 화면 딤
   x: 100, y: 0,
   vx: 0, vy: 0,
   dir: 1,                 // 1 = 오른쪽
@@ -421,11 +423,13 @@ class SessionPet {
     this.cx = 0.5; this.cy = 1;  // 회전축(이미지 0~1). 바닥중앙 고정 = 바닥점 기준 갸우뚱. render()가 사용
     this.pendingForm = null;       // docs/form에 대기 중인 입력 폼 {id,title} (있으면 클릭 시 폼 열림)
     this.sessionId = null;         // 이 펫의 세션 id (폼을 세션 단위로 매칭 — 남의 폼 가로채기 방지)
+    this.alertSince = 0;           // 알림(완료/입력필요/폼) 시작 시각. 오래 미확인이면 화면 딤으로 에스컬레이션
 
     const el = document.createElement('div');
     el.className = 'spet interactive anim-idle';
     el.innerHTML =
       '<div class="sbubble"></div>' +
+      '<div class="shalo"><i></i><i></i><i></i></div>' +
       '<div class="swrap"><span class="sbody"><span class="sbounce"><img class="ssprite"></span></span></div>' +
       '<div class="slabel"></div>';
     el.querySelector('.ssprite').src = SPET_ICON;
@@ -616,6 +620,7 @@ class SessionPet {
         this.working = false;
         if (!this.inAir()) this.enter('wait', 0);
         this.showBubble('📋 입력이 필요해요! (클릭)', true);
+        this.setAlert('wait');
       }
     } else if (this.pendingForm) {
       this.pendingForm = null;
@@ -632,12 +637,25 @@ class SessionPet {
   // 드래그/낙하 중엔 상태를 바꾸지 않는다 (착지 시 landRestore가 반영)
   inAir() { return this.state === 'drag' || this.state === 'fall'; }
 
+  // 알림 강조(헤일로 파동 + 점프). kind로 색(완료=초록/입력·폼=주황) 지정, 미확인 시간 타이머 시작.
+  setAlert(kind) {
+    this.el.classList.add('alerting');
+    this.el.classList.toggle('alert-done', kind === 'done');
+    this.el.classList.toggle('alert-wait', kind !== 'done');
+    if (!this.alertSince) this.alertSince = performance.now();
+  }
+  clearAlert() {
+    this.el.classList.remove('alerting', 'alert-done', 'alert-wait');
+    this.alertSince = 0;
+  }
+
   setWorking(task, kind) {
     if (this.state === 'bye') return;
     this.sticky = null;
     this.working = true;
     this.workTask = task || null;
     this.workTaskKind = kind || null;
+    this.clearAlert();
     if (!this.inAir()) this.enter('work', 0);
     this.showBubble(this.workBubbleText());
   }
@@ -648,6 +666,7 @@ class SessionPet {
     this.working = false;
     if (!this.inAir()) this.enter('done', 0);
     this.showBubble('🎉 작업 완료!', true);
+    this.setAlert('done');
   }
   setWaiting() {
     if (this.state === 'bye') return;
@@ -656,11 +675,13 @@ class SessionPet {
     this.working = false;
     if (!this.inAir()) this.enter('wait', 0);
     this.showBubble('🙋 입력 필요!', true);
+    this.setAlert('wait');
   }
   goIdle() {              // 완료/대기 없이 조용히 유휴로 (세션 시작 등)
     if (this.state === 'bye') return;
     this.sticky = null;
     this.working = false;
+    this.clearAlert();
     this.hideBubble();
     if (!this.inAir()) this.enter('idle', 800);
   }
@@ -681,6 +702,7 @@ class SessionPet {
     closeSpetMenu();
     this.sticky = null;
     this.working = false;
+    this.clearAlert();
     this.enter('bye', 0);
     this.showBubble('👋 안녕~');
     this.render();
@@ -979,6 +1001,23 @@ $('#refresh-usage').addEventListener('click', () => refreshUsage(true));
 setInterval(refreshProcs, 1000);
 // docs/form 폼 감지 (2초 주기) — 각 세션펫이 자기 cwd의 대기 폼을 확인
 setInterval(() => { for (const sp of sessionPets.values()) sp.checkForms(); }, 2000);
+
+// ── 알림 에스컬레이션 ── 완료/입력필요/폼이 오래(ESCALATE_MS) 미확인이면 화면을 어둡게(딤)
+// → z-index 위에 있는 알림 펫들이 스포트라이트처럼 부각된다. 확인(클릭)해 알림이 풀리면 딤도 사라진다.
+const ESCALATE_MS = 22000;
+let alertDimEl = null;
+function updateAlertDim() {
+  if (!alertDimEl) { alertDimEl = document.createElement('div'); alertDimEl.id = 'alert-dim'; document.body.appendChild(alertDimEl); }
+  const now = performance.now();
+  let escalate = false;
+  if (S.spotlightOn) {
+    for (const sp of sessionPets.values()) {
+      if (sp.alertSince && now - sp.alertSince > ESCALATE_MS) { escalate = true; break; }
+    }
+  }
+  alertDimEl.classList.toggle('on', escalate);
+}
+setInterval(updateAlertDim, 1000);
 // 사용량 HP바: 시작 시 1회 + 5분마다 갱신 (/usage는 콜드 스타트라 자주 안 부름)
 refreshUsage(false);
 setInterval(() => refreshUsage(false), 300000);
@@ -1292,6 +1331,24 @@ bgCheck.addEventListener('change', async () => {
   localStorage.setItem('bgRemove', S.bgRemove ? '1' : '0');
   const saved = await window.pet.getSavedImage();
   if (saved) loadSprite(saved);
+});
+
+// 알림 강조 토글: 링(파동)과 스포트라이트(딤)를 각각 켜고 끔
+function applyHaloSetting() { document.body.classList.toggle('no-halo', !S.haloOn); }
+const haloCheck = $('#alert-halo');
+haloCheck.checked = S.haloOn;
+applyHaloSetting();
+haloCheck.addEventListener('change', () => {
+  S.haloOn = haloCheck.checked;
+  localStorage.setItem('alertHalo', S.haloOn ? '1' : '0');
+  applyHaloSetting();
+});
+const spotCheck = $('#alert-spotlight');
+spotCheck.checked = S.spotlightOn;
+spotCheck.addEventListener('change', () => {
+  S.spotlightOn = spotCheck.checked;
+  localStorage.setItem('alertSpotlight', S.spotlightOn ? '1' : '0');
+  if (typeof updateAlertDim === 'function') updateAlertDim(); // 끄면 즉시 딤 해제
 });
 
 $('#quit-btn').addEventListener('click', () => window.pet.quit());
