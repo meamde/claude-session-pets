@@ -31,6 +31,10 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - `form-preload.js` — 세션 폼 창(BrowserWindow) 전용 IPC 브리지 (`window.sessionForm.submit/cancel/onOutput/onDone`)
 - `start.sh` — 개발 실행용 (`npx electron .` 백그라운드)
 - `build/icon.icns` — 앱 아이콘 (어른새 SVG를 스쿼클 배경에 얹어 렌더 → icns)
+- `lib/codex.js` · `lib/codex-ipc.js` · `lib/codex-hooks.js` · `lib/codex-hook.py` — Codex 연동(CLI/세션 기록, 데스크톱 IPC 호환 계층, 훅 설치기/훅 원본). 1.1.0에서 추가. 개요는 README "Codex 지원" 절
+- `assets/` — 세션 이름표용 서비스 아이콘(claude/codex)
+- `test/` — `npm test`(단위·폼) / `test:ui`(Electron 렌더) / `test:live`(읽기 전용 라이브). **`test/screenshots.cjs`** = README 스크린샷 생성기(더미 데이터, `npx electron test/screenshots.cjs` → `docs/screenshots/*.png`). 패키징 시 test/·docs/·AGENTS.md는 번들에서 제외
+- `AGENTS.md` — Codex 에이전트용 짧은 안내(본 문서를 가리킴). 이 문서를 기계 치환해 복제하지 말 것
 
 ## 세션 상태 감지 (우선순위)
 
@@ -113,6 +117,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - **우클릭 이미지 설정 메뉴(`showMenu`)**: 세션펫 우클릭 시 컨텍스트 메뉴 (`.spet-menu`, body 직속, 화면당 1개).
   항목: 창 앞으로 가져오기(기존 우클릭 동작 흡수) / Finder에서 작업 폴더 열기(`open-folder` IPC → `open <cwd>`) / 이미지 변경… / 좌우 반전(토글) / 기본 모습으로(`deleteSessionImage`+CLAUDE_ICON 복귀).
   바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. **더블클릭=창 앞으로 가져오기(`focusWindow`)**, 드롭(이미지 지정)은 유지. (이미지 변경은 우클릭 메뉴·드롭으로만)
+  - **창 앞으로 가져오기 호스트 판정(`findHostApp`)**: pid 조상 체인에서 `*.app/Contents/MacOS/` 경로를 찾는다. ⚠️ **iTerm2는 셸을 `~/Library/Application Support/iTerm2/iTermServer-<ver>` 데몬(launchd 직속) 아래에 띄워** 체인에 `.app`이 없다(실측: claude←zsh←login←iTermServer←launchd) → 데몬 이름으로 iTerm2 인식(`bundleId: com.googlecode.iterm2`, `open -b` 폴백). 안 하면 `nohost` → "창을 찾지 못했어요". tmux 서버도 launchd 직속이라 여전히 불가.
 
 ## 사용량 표시 (/usage) — 메인펫 HP바 + 사용량 탭
 

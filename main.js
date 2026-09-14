@@ -948,6 +948,10 @@ async function findHostApp(pid) {
     if (!node) break;
     const mm = node.comm.match(/^(.*\/([^/]+)\.app)\/Contents\/MacOS\//);
     if (mm) return { bundlePath: mm[1], appName: mm[2] };
+    // iTerm2는 셸을 .app 안의 실행파일이 아니라 `~/Library/Application Support/iTerm2/iTermServer-<ver>`
+    // 데몬(launchd 직속)으로 띄우므로 조상 체인에 .app 경로가 없다 → 데몬 이름으로 iTerm2를 인식.
+    // (안 하면 nohost → "창을 찾지 못했어요"가 뜬다. 실측: claude ← zsh ← login ← iTermServer-3.6.11 ← launchd)
+    if (/\/iTermServer(-[^/]*)?$/.test(node.comm)) return { bundlePath: null, bundleId: 'com.googlecode.iterm2', appName: 'iTerm2' };
     if (node.ppid <= 1) break;
     cur = node.ppid;
   }
@@ -1049,8 +1053,9 @@ ipcMain.handle('focus-session', async (_e, { pid, tty, cwd }) => {
       // notfound/noproc(제목에 폴더명 없음 등) → 아래 앱 통째 activate로 폴백
     }
     // 폴백: 앱 번들을 앞으로 (특정 창 매칭 실패 시)
+    const openArgs = host.bundlePath ? ['-a', host.bundlePath] : ['-b', host.bundleId];
     const r = await new Promise((res) =>
-      execFile('open', ['-a', host.bundlePath], (err) => res(err)));
+      execFile('open', openArgs, (err) => res(err)));
     if (!r) return { ok: true, app: host.appName };
     return { ok: false, error: String(r.message || r) };
   }
