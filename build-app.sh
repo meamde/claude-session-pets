@@ -36,7 +36,7 @@ echo "🔨 [1/4] electron-packager로 .app 빌드 중…"
 npx electron-packager . "$APP_NAME" \
   --platform=darwin --arch="$ARCH" \
   --out="$OUT_DIR" --overwrite \
-  --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh" --ignore="^/build-app.sh"
+  --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh" --ignore="^/build-app.sh" --ignore="^/test" --ignore="^/\.git($|/)"
 
 # electron-packager --icon이 적용 안 되는 버그가 있어 icns를 직접 교체
 echo "🎨 [2/4] 앱 아이콘 교체…"

@@ -1,10 +1,13 @@
 {
   "name": "claude-session-pets",
-  "version": "1.0.1",
-  "description": "macOS desktop pets that watch your running Claude CLI sessions",
+  "version": "1.1.0",
+  "description": "macOS desktop pets for Claude Code and Codex CLI / desktop sessions",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:ui": "electron test/ui-smoke.cjs",
+    "test:live": "node test/live-read.cjs"
   },
   "devDependencies": {
     "@electron/packager": "^18.4.4",

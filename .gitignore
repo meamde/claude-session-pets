@@ -15,3 +15,7 @@ dist/
 
 # 세션 폼 (런타임 산출물)
 docs/form/
+
+# Codex session form inbox
+.session-pets/
+__pycache__/

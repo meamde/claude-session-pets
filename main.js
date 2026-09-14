@@ -4,6 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { CodexProvider } = require('./lib/codex');
+const codexHooks = require('./lib/codex-hooks');
+const codex = new CodexProvider();
 
 let win = null;
 let tray = null;
@@ -75,6 +78,10 @@ function refreshTrayMenu() {
       : { label: '상태 훅 설치…', click: async () => { await promptInstallHooks(true); refreshTrayMenu(); } },
     ...(installed ? [{ label: '상태 훅 제거', click: () => { uninstallHooks(); refreshTrayMenu(); } }] : []),
     { type: 'separator' },
+    { label: codexHooks.installed() ? 'Codex 상태 훅 재설치…' : 'Codex 상태 훅 설치…', click: () => {
+      try { codexHooks.install(); refreshTrayMenu(); dialog.showMessageBox(win, { message: 'Codex 훅 설치 완료', detail: 'Codex에서 /hooks를 열어 새 훅을 신뢰해주세요. 폼 모드는 세션펫 우클릭 메뉴에서 켤 수 있어요.' }); }
+      catch (err) { dialog.showErrorBox('Codex 훅 설치 실패', err.message); }
+    } },
     { label: '종료', click: () => app.quit() },
   ]));
 }
@@ -538,9 +545,9 @@ ipcMain.handle('get-home', () => os.homedir());
 
 // ── Claude CLI 프로세스 모니터링 ─────────────────────────────
 
-function execFileP(cmd, args) {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
+function execFileP(cmd, args, strict = false) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 8000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => err && strict ? reject(err) : resolve(stdout || ''));
   });
 }
 
@@ -629,7 +636,7 @@ function listSessionsForCwd(cwd) {
 }
 
 async function computeProcs() {
-  const out = await execFileP('ps', ['-axo', 'pid=,ppid=,pcpu=,cputime=,etime=,tty=,command=']);
+  const out = await execFileP('ps', ['-axo', 'pid=,ppid=,pcpu=,cputime=,etime=,tty=,command='], true);
   const procs = [];
   for (const line of out.split('\n')) {
     const m = line.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
@@ -711,6 +718,45 @@ async function computeProcs() {
   return procs;
 }
 ipcMain.handle('list-claude-procs', computeProcs);
+let lastClaudeRows = [];
+ipcMain.handle('list-sessions', async () => {
+  const results = await Promise.allSettled([computeProcs(), codex.list()]);
+  if (results[0].status === 'fulfilled') lastClaudeRows = results[0].value.map(p => ({ ...p, provider: 'claude', id: 'claude:' + p.pid }));
+  return [...lastClaudeRows, ...(results[1].status === 'fulfilled' ? results[1].value : codex.rows)];
+});
+ipcMain.handle('codex-form-mode', (_e, id) => { try { return { ok: true, on: codexHooks.toggle(id) }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle('interrupt-session', async (_e, { provider, sessionId, pid }) => {
+  try {
+    if (provider === 'codex') return await codex.interrupt(sessionId);
+    const rows = await computeProcs();
+    if (!rows.some(p => p.pid === pid)) throw Error('실행 중인 Claude 세션이 없어요');
+    process.kill(pid, 'SIGTERM'); return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle('focus-agent-session', async (_e, { provider, sessionId }) => {
+  if (provider !== 'codex' || !/^[a-f0-9-]{36}$/i.test(sessionId || '')) return { ok: false };
+  // Desktop registers codex:// deep links; use exact thread ID, never a cwd title guess.
+  try { await require('electron').shell.openExternal('codex://threads/' + sessionId); return { ok: true }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle('run-codex', (_e, { id, prompt, cwd }) => {
+  try {
+    if (!prompt || typeof prompt !== 'string') throw Error('프롬프트가 필요해요');
+    const child = codex.run({ prompt, cwd: cwd || os.homedir(), onOutput: (chunk, stderr) => {
+      if (!win.isDestroyed()) win.webContents.send('run-output', { id, chunk, stderr });
+    }, onDone: ({ code, error }) => { runs.delete(id); if (!win.isDestroyed()) win.webContents.send('run-done', { id, code, error }); } });
+    runs.set(id, child); return { ok: true, pid: child.pid };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle('chat-codex', (_e, { message, sessionId }) => new Promise(resolve => {
+  try {
+    const id = crypto.randomUUID();
+    const child = codex.run({ prompt: message, cwd: os.homedir(), sessionId, chat: true, onOutput: () => {}, onDone: r => {
+      runs.delete(id); resolve({ ok: r.code === 0, reply: r.reply, sessionId: r.sessionId, error: r.error || (r.code ? 'Codex 실행 실패' : null) });
+    } }); runs.set(id, child);
+  } catch (err) { resolve({ ok: false, error: err.message }); }
+}));
+
 
 // ── 크로스세션 소켓 직접 주입 (LLM/claude -p 없이 즉시 전달, <1초) ──
 // 와이어 포맷(공개): 유닉스 소켓에 JSON 한 줄씩 write 후 half-close.
@@ -1076,8 +1122,31 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+const codexFormPaths = new Map();
+function formFile(id, ext = '.json') {
+  if (codexFormPaths.has(id)) return codexFormPaths.get(id).replace(/\.json$/, ext);
+  if (!/^[^/\\.][^/\\]*$/.test(id || '') || id.includes('..')) throw Error('잘못된 폼 ID');
+  return path.join(formsDir(), id + ext);
+}
+
 // 특정 세션의 미처리 폼 목록 (공용 폴더에서 sessionId로 필터)
-ipcMain.handle('list-forms', (_e, sessionId) => {
+ipcMain.handle('list-forms', (_e, sessionId, provider) => {
+  if (provider === 'codex') {
+    const row = codex.rows.find(r => r.sessionId === sessionId);
+    if (!row?.cwd) return [];
+    try {
+      const dir = path.join(row.cwd, '.session-pets', 'forms');
+      return fs.readdirSync(dir).filter(f => f.endsWith('.json')).flatMap(f => {
+        try {
+          const file = path.join(dir, f); if (fs.lstatSync(file).isSymbolicLink() || fs.statSync(file).size > 1024 * 1024) return [];
+          const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (j.provider !== 'codex' || j.sessionId !== sessionId) return [];
+          const id = 'codex-' + crypto.createHash('sha256').update(file).digest('hex'); codexFormPaths.set(id, file);
+          return [{ id, title: j.title || f, sessionId, mtimeMs: fs.statSync(file).mtimeMs }];
+        } catch { return []; }
+      }).sort((a,b) => b.mtimeMs - a.mtimeMs);
+    } catch { return []; }
+  }
   if (!sessionId) return [];
   try {
     const dir = formsDir();
@@ -1273,9 +1342,9 @@ function renderFormHtml(form, ctx) {
 let formWin = null;
 ipcMain.handle('open-form', (_e, { id }) => {
   try {
-    const form = JSON.parse(fs.readFileSync(path.join(formsDir(), id + '.json'), 'utf8'));
+    const form = JSON.parse(fs.readFileSync(formFile(id), 'utf8'));
     const html = renderFormHtml(form, { id });
-    const htmlPath = path.join(formsDir(), id + '.html');
+    const htmlPath = formFile(id, '.html');
     fs.writeFileSync(htmlPath, html); // 렌더된 HTML도 공용 폴더에 남김
     if (formWin && !formWin.isDestroyed()) formWin.close();
     formWin = new BrowserWindow({
@@ -1318,13 +1387,14 @@ function formatCancel(form) {
 
 function markFormDone(id, answers) {
   try {
-    const dir = formsDir();
+    const dir = path.dirname(formFile(id));
+    const filename = path.basename(formFile(id), '.json');
     const doneDir = path.join(dir, 'done');
     fs.mkdirSync(doneDir, { recursive: true });
-    try { fs.writeFileSync(path.join(doneDir, id + '.answer.json'), JSON.stringify(answers, null, 2)); } catch {}
+    try { fs.writeFileSync(path.join(doneDir, filename + '.answer.json'), JSON.stringify(answers, null, 2)); } catch {}
     for (const ext of ['.json', '.html']) {
-      const src = path.join(dir, id + ext);
-      if (fs.existsSync(src)) { try { fs.renameSync(src, path.join(doneDir, id + ext)); } catch {} }
+      const src = formFile(id, ext);
+      if (fs.existsSync(src)) { try { fs.renameSync(src, path.join(doneDir, filename + ext)); } catch {} }
     }
   } catch {}
 }
@@ -1375,12 +1445,22 @@ function resolvePeerName(cwd) {
 
 ipcMain.handle('submit-form', async (_e, { id, answers, cancel }) => {
   let form;
-  try { form = JSON.parse(fs.readFileSync(path.join(formsDir(), id + '.json'), 'utf8')); }
+  try { form = JSON.parse(fs.readFileSync(formFile(id), 'utf8')); }
   catch (err) { return { ok: false, error: '폼 파일을 읽지 못했어요: ' + String(err.message || err) }; }
   const prompt = cancel ? formatCancel(form) : formatAnswers(form, answers);
   const doneAnswers = cancel ? { __cancelled: true } : answers; // done/으로 남길 기록
   const cwd = (form.cwd && fs.existsSync(form.cwd)) ? form.cwd : os.homedir(); // claude 실행 폴더 = 폼에 기록된 작업 폴더
   const send = (ch, data) => { if (formWin && !formWin.isDestroyed()) formWin.webContents.send(ch, data); };
+
+  if (form.provider === 'codex') {
+    try {
+      // A form answer is a new prompt after the form-producing turn has stopped.
+      const result = await codex.send(form.sessionId, prompt);
+      markFormDone(id, doneAnswers);
+      send('form-done', { code: 0, mode: result.mode });
+      return result;
+    } catch (err) { return { ok: false, error: err.message }; }
+  }
 
   const runRelay = (name) => {
     send('form-output', { chunk: `‘${name}’ 세션(터미널)으로 전달 중…\n` });
@@ -1438,7 +1518,8 @@ ipcMain.handle('submit-form', async (_e, { id, answers, cancel }) => {
 });
 
 // 패널 "메시지 보내기": tty 주입(iTerm/Terminal 전용) 대신 크로스세션 메시징으로 아무 세션에나 전달(Warp 포함)
-ipcMain.handle('send-to-session', async (_e, { cwd, sessionId, text }) => {
+ipcMain.handle('send-to-session', async (_e, { cwd, sessionId, text, provider }) => {
+  if (provider === 'codex') { try { return await codex.send(sessionId, text); } catch (err) { return { ok: false, error: err.message }; } }
   if (!text || !String(text).trim()) return { ok: false, error: '보낼 내용이 없어요' };
   // ⭐ 0순위: 소켓 직접 주입 (<1초). 펫이 넘긴 sessionId로 살아있는 pid 찾아 주입.
   if (sessionId && await injectBySessionId(sessionId, text)) return { ok: true, mode: 'socket' };
@@ -1506,7 +1587,8 @@ function fetchUsage() {
 }
 
 // 캐시 우선. force=true면 강제 갱신. (HP바는 캐시, 탭 열 때 force로 최신화)
-ipcMain.handle('get-usage', async (_e, force) => {
+ipcMain.handle('get-usage', async (_e, force, provider) => {
+  if (provider === 'codex') { try { if (force) codex.usageCache = null; return await codex.usage(); } catch { return null; } }
   if (!force && usageCache.data && Date.now() - usageCache.at < 60000) return usageCache.data;
   const data = await fetchUsage();
   return data || usageCache.data || null;
@@ -1573,6 +1655,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  codex.close();
   for (const [, child] of runs) { try { child.kill('SIGTERM'); } catch {} }
   // 잡담용 자식(claude -p)도 함께 정리 — 방치하면 앱 종료 후 고아 프로세스가 남고,
   // 재실행 시 chatPids가 비어 있어 일반 세션 펫으로 오인된다.

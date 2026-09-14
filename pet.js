@@ -5,10 +5,26 @@
 const $ = (s) => document.querySelector(s);
 const petEl = $('#pet');
 const spriteEl = $('#sprite');
-const badgeEl = $('#badge');
 const bubbleEl = $('#bubble');
 const zzzEl = $('#zzz');
 const panelEl = $('#panel');
+let selectedProvider = localStorage.getItem('selectedProvider') === 'codex' ? 'codex' : 'claude';
+const providerSelect = $('#provider-select');
+providerSelect.value = selectedProvider;
+providerSelect.addEventListener('change', () => {
+  selectedProvider = providerSelect.value;
+  localStorage.setItem('selectedProvider', selectedProvider);
+  chatSessionId = localStorage.getItem('chatSessionId:' + selectedProvider) || (selectedProvider === 'claude' ? localStorage.getItem('chatSessionId') : null);
+  chatLog.textContent = '';
+  refreshUsage(false);
+});
+
+petEl.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (providerSelect.disabled) { say('답변이 끝나면 전환할 수 있어요', 2000); return; }
+  providerSelect.value = selectedProvider === 'claude' ? 'codex' : 'claude';
+  providerSelect.dispatchEvent(new Event('change'));
+});
 
 // ── 상태 ─────────────────────────────────────────────────────
 const S = {
@@ -154,6 +170,7 @@ document.addEventListener('mousemove', (e) => {
   if (!dragPet) return;
   const sp = dragPet;
   if (!sp._moved && Math.hypot(e.clientX - sp._down.x, e.clientY - sp._down.y) > 6) {
+    clearTimeout(sp._holdTimer);
     sp._moved = true;
     sp.el.classList.add('grabbing');
     sp.enter('drag', 0);
@@ -167,6 +184,7 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
   if (!dragPet) return;
   const sp = dragPet;
+  clearTimeout(sp._holdTimer);
   dragPet = null;
   dragging = false;
   sp.el.classList.remove('grabbing');
@@ -319,10 +337,30 @@ function setHpBar(fillId, pctId, u) {
   fill.style.background = usageColor(pct);
   lbl.textContent = pct == null ? '–' : pct + '%';
 }
+let usageRequestSeq = 0;
 async function refreshUsage(force) {
+  const requestSeq = ++usageRequestSeq;
+  const provider = selectedProvider;
+  const bars = $('#hpbars');
+  if (bars.dataset.provider !== provider) {
+    setHpBar('#hp-session', '#hp-session-pct', null);
+    setHpBar('#hp-week', '#hp-week-pct', null);
+    document.querySelectorAll('.hplbl')[0].textContent = '5h';
+  }
+  bars.dataset.provider = provider;
+  const icon = $('#usage-provider-icon');
+  icon.src = provider === 'codex' ? 'assets/codex.png' : 'assets/claude.png';
+  icon.alt = provider === 'codex' ? 'Codex' : 'Claude';
+  $('#usage-caption').textContent = icon.alt + ' 구독 사용량';
   let u = null;
-  try { u = await window.pet.getUsage(force); } catch {}
+  try { u = await window.pet.getUsage(force, provider); } catch {}
+  if (provider !== selectedProvider || requestSeq !== usageRequestSeq) return;
   // HP바 갱신 (세션=5h, 주간=all models)
+  document.querySelector('#hpbars').dataset.provider = selectedProvider;
+  const labels = document.querySelectorAll('.hplbl');
+  labels[0].textContent = '5h';
+  labels[1].textContent = selectedProvider === 'codex' && u?.weekAll?.minutes && u.weekAll.minutes !== 10080 ? Math.round(u.weekAll.minutes / 60) + 'h' : '주간';
+  $('#usage-caption').textContent = (selectedProvider === 'codex' ? 'Codex' : 'Claude') + ' 구독 사용량';
   const week = u && (u.weekAll || (u.weeks && u.weeks.find(w => /all models/i.test(w.model))));
   setHpBar('#hp-session', '#hp-session-pct', u && u.session);
   setHpBar('#hp-week', '#hp-week-pct', week);
@@ -352,6 +390,7 @@ function gaugeHtml(name, u) {
 function renderUsageTab(body, u) {
   body.textContent = '';
   if (!u) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '사용량을 불러오지 못했어요'; body.appendChild(e); return; }
+  if (u.windows) { for (const w of u.windows) body.appendChild(gaugeHtml(w.minutes === 10080 ? w.name.replace(/168시간|168h/g, '주간') : w.name, w)); return; }
   // 세션(5h)
   const s = gaugeHtml('현재 세션 (5시간)', u.session); if (s) body.appendChild(s);
   // 주간: all models 먼저, 그 외 모델(Fable 등) 이어서
@@ -401,12 +440,73 @@ document.addEventListener('mousedown', (e) => {
 
 function clampXW(x, w) { return Math.max(0, Math.min(window.innerWidth - w, x)); }
 
+// Desktop pet visibility is scoped to thread ID, independently of cwd and runtime.
+function isDesktopPet(p) { return p.provider === 'codex' && p.transport === 'desktop'; }
+function hiddenDesktopPet(p) { return isDesktopPet(p) && localStorage.getItem('hiddenDesktopPet:' + p.id) === '1'; }
+function desktopActivity(p) { return { state: p.state || 'idle', turnId: p.turnId || null }; }
+function wakeHiddenDesktopPet(p) {
+  if (p.disconnected) return false;
+  const key = 'hiddenDesktopActivity:' + p.id;
+  let previous;
+  try { previous = JSON.parse(localStorage.getItem(key)); } catch {}
+  const current = desktopActivity(p);
+  // Compare turns as well as states: a short new turn may finish between polls.
+  const newTurn = previous?.turnId && current.turnId && previous.turnId !== current.turnId;
+  const resumed = previous && previous.state !== 'working' && current.state === 'working';
+  const needsInput = previous?.state === 'idle' && current.state === 'waiting';
+  if (newTurn || resumed || needsInput) {
+    localStorage.removeItem('hiddenDesktopPet:' + p.id);
+    localStorage.removeItem(key);
+    return true;
+  }
+  // Legacy hidden pets establish a baseline on the first successful observation.
+  localStorage.setItem(key, JSON.stringify(current));
+  return false;
+}
+function setPetEditMode(on) {
+  document.body.classList.toggle('pet-editing', on);
+  closeSpetMenu();
+}
+function setDesktopPetHidden(p, hidden) {
+  if (!isDesktopPet(p)) return;
+  if (hidden) {
+    const row = procs.find(row => row.id === p.id) || p;
+    localStorage.setItem('hiddenDesktopActivity:' + p.id, JSON.stringify(desktopActivity(row)));
+    localStorage.setItem('hiddenDesktopPet:' + p.id, '1');
+  } else {
+    localStorage.removeItem('hiddenDesktopPet:' + p.id);
+    localStorage.removeItem('hiddenDesktopActivity:' + p.id);
+  }
+  sessionPets.get(p.id)?.destroy();
+  tracked?.delete(p.id);
+  detectEvents();
+  renderProcs();
+  if (![...sessionPets.values()].some(isDesktopPet)) setPetEditMode(false);
+}
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('.spet, .spet-menu')) setPetEditMode(false);
+}, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') setPetEditMode(false); });
+window.addEventListener('blur', () => {
+  if (dragPet) {
+    clearTimeout(dragPet._holdTimer);
+    dragPet.el.classList.remove('grabbing');
+    if (dragPet._moved) { dragPet.vy = 0; dragPet.enter('fall'); }
+    dragPet = null; dragging = false;
+  }
+  setPetEditMode(false);
+});
+
 class SessionPet {
-  constructor(pid, name, cwd, tty) {
+  constructor(pid, name, cwd, tty, session) {
+    this.id = session.id;
+    this.provider = session.provider;
+    this.cwd = cwd;
+    this.transport = session.transport;
     this.pid = pid;
     this.name = name;
     this.tty = tty || null;
-    this.key = cwd || ('pid:' + pid); // 이미지 저장 키 (프로젝트 경로 기준으로 재시작해도 유지)
+    this.key = (this.provider === 'codex' ? 'codex:' : '') + (cwd || ('pid:' + pid)); // 이미지 저장 키 (프로젝트 경로 기준으로 재시작해도 유지)
     this.flip = localStorage.getItem('spetFlip:' + this.key) === '1'; // 좌우 반전(이미지 설정, key별 저장)
     this.x = clampXW(Math.random() * window.innerWidth, SPET_SIZE);
     this.y = this.groundY();
@@ -431,14 +531,35 @@ class SessionPet {
       '<div class="sbubble"></div>' +
       '<div class="shalo"><i></i><i></i><i></i></div>' +
       '<div class="swrap"><span class="sbody"><span class="sbounce"><img class="ssprite"></span></span></div>' +
-      '<div class="slabel"></div>';
+      '<div class="session-caption"><div class="slabel"></div></div>';
     el.querySelector('.ssprite').src = SPET_ICON;
+    el.dataset.provider = this.provider;
     this.el = el;
+    el.dataset.desktop = String(isDesktopPet(this));
+    const badge = document.createElement('span');
+    badge.className = 'desktop-badge'; badge.title = 'Codex 데스크톱 앱';
+    badge.setAttribute('aria-label', '데스크톱 앱');
+    badge.innerHTML = '<span class="monitor-screen"></span>';
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'desktop-close'; close.textContent = '×';
+    close.title = '펫 숨기기 (작업은 계속됩니다)'; close.setAttribute('aria-label', '이 데스크톱 펫 숨기기');
+    close.addEventListener('mousedown', e => e.stopPropagation());
+    close.addEventListener('dblclick', e => e.stopPropagation());
+    close.addEventListener('click', e => { e.stopPropagation(); setDesktopPetHidden(this, true); });
+    el.append(badge, close);
     this.spriteEl = el.querySelector('.ssprite');
     this.bodyEl = el.querySelector('.sbody');
     this.bubbleEl = el.querySelector('.sbubble');
     this.labelEl = el.querySelector('.slabel');
-    this.labelEl.textContent = name;
+    const providerIcon = document.createElement('img');
+    providerIcon.className = 'provider-icon';
+    providerIcon.src = this.provider === 'codex' ? 'assets/codex.png' : 'assets/claude.png';
+    providerIcon.alt = this.provider === 'codex' ? 'Codex' : 'Claude';
+    this.nameEl = document.createElement('span');
+    this.nameEl.className = 'session-name';
+    this.nameEl.textContent = name;
+    this.labelEl.append(this.nameEl);
+    el.querySelector('.session-caption').prepend(providerIcon);
     document.body.appendChild(el);
     this.render();
     this.bindPointer();
@@ -468,7 +589,7 @@ class SessionPet {
       setTimeout(() => this.restoreBubble(), 2200);
     };
     let r;
-    try { r = await window.pet.focusSession(this.pid, this.tty, this.key); }
+    try { r = this.provider === 'codex' && this.transport !== 'cli' ? await window.pet.focusAgentSession({ provider: this.provider, sessionId: this.sessionId }) : await window.pet.focusSession(this.pid, this.tty, this.cwd); }
     catch { flash('앞으로 못 가져왔어요 😿'); return; }
     if (r.ok) flash('여기예요! 👀');
     else if (r.error === 'automation')
@@ -480,7 +601,7 @@ class SessionPet {
 
   // 이 세션의 작업 폴더(cwd)를 Finder에서 연다
   async openFolder() {
-    const cwd = this.key && !this.key.startsWith('pid:') ? this.key : null;
+    const cwd = this.cwd;
     if (!cwd) { this.showBubble('작업 폴더를 몰라요 🤔'); setTimeout(() => this.restoreBubble(), 1800); return; }
     let r;
     try { r = await window.pet.openFolder(cwd); } catch { r = { ok: false }; }
@@ -509,6 +630,13 @@ class SessionPet {
     const sep = () => { const s = document.createElement('div'); s.className = 'spet-menu-sep'; m.appendChild(s); };
     item('👀', '창 앞으로 가져오기', () => this.focusWindow());
     item('📁', 'Finder에서 작업 폴더 열기', () => this.openFolder());
+    if (this.provider === 'codex') item('📋', '폼 모드 켜기/끄기', async () => {
+      const r = await window.pet.codexFormMode(this.sessionId);
+      if (!r.ok) { alert(r.error); return; }
+      this.showBubble(r.on ? '📋 폼 모드 ON (다음 메시지부터)' : '폼 모드 OFF');
+      setTimeout(() => this.restoreBubble(), 2500);
+    });
+    if (isDesktopPet(this)) item('×', '펫 숨기기 (작업 유지)', () => setDesktopPetHidden(this, true));
     sep();
     item('🖼️', '이미지 변경…', () => this.assignImage());
     item(this.flip ? '✓' : '↔️', '좌우 반전', () => this.toggleFlip());
@@ -548,6 +676,12 @@ class SessionPet {
       this._down = { x: e.clientX, y: e.clientY };
       this._grab = { x: e.clientX - this.x, y: e.clientY - this.y };
       this._moved = false;
+      clearTimeout(this._holdTimer);
+      if (isDesktopPet(this)) this._holdTimer = setTimeout(() => {
+        if (dragPet !== this || this._moved) return;
+        dragPet = null; dragging = false;
+        setPetEditMode(true);
+      }, 600);
     });
     el.addEventListener('dblclick', () => this.focusWindow());
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); this.showMenu(e); });
@@ -568,7 +702,9 @@ class SessionPet {
   groundY() { return window.innerHeight - SPET_SIZE - SLABEL_H; }
 
   setAnim(a) {
-    this.el.className = 'spet interactive anim-' + a + (this.el.classList.contains('grabbing') ? ' grabbing' : '');
+    // Animation changes must preserve alert priority while dragging or landing.
+    for (const name of [...this.el.classList]) if (name.startsWith('anim-')) this.el.classList.remove(name);
+    this.el.classList.add('anim-' + a);
   }
 
   enter(state, dur) {
@@ -595,7 +731,7 @@ class SessionPet {
   }
 
   setName(n) {
-    if (n && n !== this.name) { this.name = n; this.labelEl.textContent = n; }
+    if (n && n !== this.name) { this.name = n; this.nameEl.textContent = n; }
   }
 
   showBubble(text, big = false) {
@@ -622,7 +758,7 @@ class SessionPet {
     if (this.state === 'bye') return;
     if (!this.sessionId) return; // 내 세션 id를 알아야 공용 폴더에서 내 폼을 찾는다
     let forms = [];
-    try { forms = await window.pet.listForms(this.sessionId); } catch { return; }
+    try { forms = await window.pet.listForms(this.sessionId, this.provider); } catch { return; }
     const f = forms && forms[0];
     if (f) {
       // 폼은 done/wait보다 우선. 새 폼이거나, 완료·유휴 등이 폼 말풍선을 덮었으면(sticky!=='form') 다시 폼으로 복원.
@@ -651,6 +787,8 @@ class SessionPet {
 
   // 알림 강조(헤일로 파동 + 점프). kind로 색(완료=초록/입력·폼=주황) 지정, 미확인 시간 타이머 시작.
   setAlert(kind) {
+    // Among alerts, show the newest one first without stealing keyboard focus.
+    if (!this.el.classList.contains('alerting')) document.body.appendChild(this.el);
     this.el.classList.add('alerting');
     this.el.classList.toggle('alert-done', kind === 'done');
     this.el.classList.toggle('alert-wait', kind !== 'done');
@@ -721,13 +859,16 @@ class SessionPet {
     setTimeout(() => this.destroy(), 2200);
   }
   destroy() {
+    clearTimeout(this._holdTimer);
+    if (dragPet === this) { dragPet = null; dragging = false; }
     this.el.remove();
     // 조회 실패로 잠깐 사라졌다가 같은 pid로 새 펫이 만들어진 경우,
     // 옛 펫의 지연된 destroy가 "새" 펫을 맵에서 지우지 않도록 자기 자신일 때만 삭제.
-    if (sessionPets.get(this.pid) === this) sessionPets.delete(this.pid);
+    if (sessionPets.get(this.id) === this) sessionPets.delete(this.id);
   }
 
   update(dt, now) {
+    if (isDesktopPet(this) && (dragPet === this || document.body.classList.contains('pet-editing')) && !['drag', 'fall', 'bye'].includes(this.state)) { this.render(); return; }
     if (this.state === 'drag') { this.render(); return; } // 드래그 중엔 손이 위치 제어
     if (this.state === 'bye') { this.y = this.groundY(); this.render(); return; }
     if (this.state === 'fall') {
@@ -802,6 +943,8 @@ function procName(p) {
 
 // 이번 폴링의 세션 상태: 'working' | 'waiting' | 'idle'
 function sessionState(p, t, now) {
+  if (p.disconnected) return t.mode;
+  if (p.provider === 'codex') return p.state || 'idle';
   if (p.hookState && p.hookAge < HOOK_TTL) {   // 훅이 최우선 (가장 정확)
     if (p.hookState === 'working') return 'working';
     if (p.hookState === 'waiting') return 'waiting';
@@ -821,37 +964,39 @@ function detectEvents() {
   const now = performance.now();
 
   for (const p of procs) {
-    seen.add(p.pid);
+    seen.add(p.id);
+    if (hiddenDesktopPet(p) && !wakeHiddenDesktopPet(p)) { sessionPets.get(p.id)?.destroy(); tracked.delete(p.id); continue; }
     const name = procName(p);
     const quiet = myRunPids.has(p.pid) || p.chat; // 메인펫의 직접 실행/잡담은 세션펫 제외
-    let t = tracked.get(p.pid);
+    let t = tracked.get(p.id);
     if (!t) {
       // lastAdvance를 과거(0)로 두면, 훅/트랜스크립트가 없는 세션의 첫 폴링은
       // CPU 폴백에서 idle로 판정된다 (첫 회는 cpusec baseline만 잡음). 이게 없으면
       // 앱을 켜는 순간 놀고 있던 세션도 '작업 중'으로 떴다가 곧 가짜 '작업 완료!'가 뜬다.
       t = { name, mode: 'idle', task: null, taskKind: null, cpusec: p.cpusec, lastAdvance: 0, idleSince: 0, quiet };
-      tracked.set(p.pid, t);
+      tracked.set(p.id, t);
       if (!quiet) {
-        const sp = new SessionPet(p.pid, name, p.cwd, p.tty);
+        const sp = new SessionPet(p.pid, name, p.cwd, p.tty, p);
         sp.sessionId = p.sessionId || null;
-        sessionPets.set(p.pid, sp);
+        sessionPets.set(p.id, sp);
         const st = sessionState(p, t, now);
-        if (st === 'working') { t.mode = 'working'; t.task = p.hookTask || null; t.taskKind = p.hookTaskKind || null; sp.setWorking(t.task, t.taskKind); }
+        if (st === 'working') { t.mode = 'working'; t.task = p.task || p.hookTask || null; t.taskKind = p.taskKind || p.hookTaskKind || null; sp.setWorking(t.task, t.taskKind); }
         else if (st === 'waiting') { t.mode = 'waiting'; sp.setWaiting(); }
       }
       continue;
     }
     t.name = name; // cwd가 늦게 조회되는 경우 갱신
     t.quiet = t.quiet || quiet;
-    const sp = sessionPets.get(p.pid);
-    if (sp) { sp.setName(name); if (p.sessionId) sp.sessionId = p.sessionId; }
+    const sp = sessionPets.get(p.id);
+    if (quiet && sp) { sp.destroy(); }
+    if (sp && !quiet) { sp.setName(name); sp.pid = p.pid; sp.cwd = p.cwd; sp.tty = p.tty; sp.transport = p.transport; sp.el.dataset.desktop = String(isDesktopPet(p)); if (p.sessionId) sp.sessionId = p.sessionId; }
 
     const st = sessionState(p, t, now);
     t.cpusec = p.cpusec;
     if (st === 'working') {
       t.idleSince = 0;
-      const task = p.hookTask || null;
-      const kind = p.hookTaskKind || null;
+      const task = p.task || p.hookTask || null;
+      const kind = p.taskKind || p.hookTaskKind || null;
       // 작업 시작뿐 아니라 작업 내용/종류(프롬프트↔작업)가 바뀔 때도 말풍선 갱신
       if (t.mode !== 'working' || t.task !== task || t.taskKind !== kind) {
         t.mode = 'working';
@@ -871,7 +1016,7 @@ function detectEvents() {
           const wasWorking = t.mode === 'working';
           t.mode = 'idle';
           t.idleSince = 0;
-          if (sp) { if (wasWorking) sp.setDone(); else sp.goIdle(); }
+          if (sp) { if (wasWorking && !p.runtimeError) sp.setDone(); else sp.goIdle(); }
         }
       }
     }
@@ -882,31 +1027,33 @@ function detectEvents() {
       tracked.delete(pid);
       const sp = sessionPets.get(pid);
       if (sp) sp.farewell();
-      myRunPids.delete(pid);
+      if (String(pid).startsWith('claude:')) myRunPids.delete(Number(String(pid).slice(7)));
     }
   }
 }
 
 let injectableTtys = new Set(); // iTerm2/Terminal.app에 열려 있어 명령 주입이 가능한 tty
 
+let refreshInflight = false;
 async function refreshProcs() {
+  if (refreshInflight) return;
+  refreshInflight = true;
   try {
-    procs = await window.pet.listClaudeProcs();
+    procs = await window.pet.listSessions();
   } catch { /* IPC 조회 실패 시 이전 목록 유지: 전 펫이 farewell됐다 재생성되며 가짜 완료가 뜨는 걸 방지 */ }
   try {
     injectableTtys = new Set(await window.pet.listInjectableTtys());
   } catch { injectableTtys = new Set(); }
-  detectEvents();
-  S.procBusy = [...tracked.values()].some(t => t.mode === 'working');
-  updateBadge();
-  renderProcs();
+  try {
+    detectEvents();
+    S.procBusy = [...tracked.values()].some(t => t.mode === 'working');
+    updateSessionSummary();
+    renderProcs();
+  } finally { refreshInflight = false; }
 }
 
-function updateBadge() {
+function updateSessionSummary() {
   const n = procs.length;
-  badgeEl.textContent = n;
-  badgeEl.classList.toggle('show', n > 0);
-  badgeEl.classList.toggle('busy', S.procBusy || S.working);
   $('#proc-count').textContent = n ? `(${n})` : '';
   if (S.state === 'idle') setAnim(S.working ? 'work' : 'idle');
 }
@@ -917,7 +1064,7 @@ function renderProcs() {
   const list = $('#proc-list');
   if (!panelOpen || sendRowOpen) return;
   if (!procs.length) {
-    list.innerHTML = '<div class="empty">실행 중인 Claude CLI가 없습니다 🍃</div>';
+    list.innerHTML = '<div class="empty">실행 중인 Claude/Codex 세션이 없습니다 🍃</div>';
     return;
   }
   list.innerHTML = '';
@@ -928,7 +1075,7 @@ function renderProcs() {
     div.className = 'proc';
     const cwd = p.cwd || '(알 수 없음)';
     const short = cwd.replace(/^\/Users\/[^/]+/, '~');
-    const mode = tracked?.get(p.pid)?.mode || 'idle';
+    const mode = tracked?.get(p.id)?.mode || (p.provider === 'codex' ? p.state : null) || 'idle';
     const label = mode === 'working' ? '작업 중' : mode === 'waiting' ? '입력 필요' : '대기';
     // cwd/etime/tty는 외부 프로세스에서 온 신뢰 불가 문자열이므로 innerHTML 대신
     // textContent로 넣는다 (디렉토리명에 HTML이 들어간 XSS→명령 실행 방지).
@@ -943,7 +1090,7 @@ function renderProcs() {
     titleEl.textContent = p.sessionName || short;
     const meta = document.createElement('div');
     meta.className = 'p-meta';
-    meta.textContent = `PID ${p.pid} · CPU ${p.cpu.toFixed(1)}% · ${p.etime}${p.tty ? ' · ' + p.tty : ''} · ${label}`;
+    meta.textContent = p.provider === 'codex' ? `Codex · ${p.transport === 'desktop' ? '데스크톱 앱' : p.transport === 'cli' ? 'CLI' : '서버'} · ${p.sessionId.slice(0, 8)} · ${p.disconnected ? '재연결 중' : label}` : `PID ${p.pid} · CPU ${p.cpu.toFixed(1)}% · ${p.etime}${p.tty ? ' · ' + p.tty : ''} · ${label}`;
     info.append(titleEl, meta);
     div.append(dot, info);
 
@@ -956,12 +1103,19 @@ function renderProcs() {
       div.appendChild(send);
     }
 
+    if (isDesktopPet(p)) {
+      const visibility = document.createElement('button');
+      visibility.className = 'btn small';
+      visibility.textContent = hiddenDesktopPet(p) ? '펫 표시' : '펫 숨기기';
+      visibility.addEventListener('click', () => setDesktopPetHidden(p, !hiddenDesktopPet(p)));
+      div.appendChild(visibility);
+    }
     const kill = document.createElement('button');
     kill.className = 'btn danger small';
-    kill.textContent = '종료';
+    kill.textContent = p.provider === 'codex' && p.transport !== 'cli' ? '중단' : '종료';
     kill.addEventListener('click', async () => {
-      if (!confirm(`PID ${p.pid} (${short}) 프로세스를 종료할까요?`)) return;
-      const r = await window.pet.killProc(p.pid, false);
+      if (!confirm(p.provider === 'codex' && p.transport !== 'cli' ? `${procName(p)} 작업을 중단할까요?` : `PID ${p.pid} (${short}) 프로세스를 종료할까요?`)) return;
+      const r = await window.pet.interruptSession({ provider: p.provider, sessionId: p.sessionId, pid: p.pid });
       if (!r.ok) alert('종료 실패: ' + r.error);
       setTimeout(refreshProcs, 400);
     });
@@ -988,7 +1142,7 @@ function openSendRow(wrap, p, name, cwd) {
     if (!text) return;
     btn.disabled = true; btn.textContent = '전송 중…';
     // 크로스세션 메시징으로 전달 (Warp 포함). claude를 한 번 띄워 SendMessage하므로 몇 초 걸림.
-    const r = await window.pet.sendToSession(cwd, p.sessionId || null, text);
+    const r = await window.pet.sendToSession(cwd, p.sessionId || null, text, p.provider);
     if (r.ok) {
       notify(`📨 ${r.name || name} — 메시지 전송`);
       close();
@@ -1024,6 +1178,8 @@ function updateAlertDim() {
   let escalate = false;
   if (S.spotlightOn) {
     for (const sp of sessionPets.values()) {
+      // 폼이 떠 있는 펫은 클릭해서 폼 창으로 확인하면 되므로 딤(스포트라이트) 에스컬레이션 제외
+      if (sp.pendingForm) continue;
       if (sp.alertSince && now - sp.alertSince > ESCALATE_MS) { escalate = true; break; }
     }
   }
@@ -1066,14 +1222,14 @@ async function runPrompt() {
   sessions.set(id, { el, pre, prompt, done: false });
   $('#prompt-input').value = '';
 
-  const r = await window.pet.runClaude({ id, prompt, cwd });
+  const r = await (selectedProvider === 'codex' ? window.pet.runCodex : window.pet.runClaude)({ id, prompt, cwd });
   if (!r.ok) {
     finishSession(id, -1, r.error);
     return;
   }
   if (r.pid) myRunPids.add(r.pid);
   S.working = true;
-  updateBadge();
+  updateSessionSummary();
   notify(`🏃 "${taskLabel(prompt)}" — 작업 시작`);
 }
 
@@ -1096,7 +1252,7 @@ function finishSession(id, code, error) {
     s.pre.appendChild(span);
   }
   S.working = [...sessions.values()].some(x => !x.done);
-  updateBadge();
+  updateSessionSummary();
   notify(code === 0
     ? `✅ "${taskLabel(s.prompt)}" — 작업 완료`
     : `❌ "${taskLabel(s.prompt)}" — 작업 실패`);
@@ -1124,7 +1280,7 @@ $('#prompt-input').addEventListener('keydown', (e) => {
 });
 
 // ── 잡담 (대화 세션 유지) ────────────────────────────────────
-let chatSessionId = localStorage.getItem('chatSessionId') || null;
+let chatSessionId = localStorage.getItem('chatSessionId:' + selectedProvider) || (selectedProvider === 'claude' ? localStorage.getItem('chatSessionId') : null);
 let chatBusy = false;
 const chatLog = $('#chat-log');
 const chatInput = $('#chat-input');
@@ -1149,7 +1305,12 @@ async function sendChat() {
   const thinking = addMsg('pet thinking', '생각 중… 🐾');
   setAnim('work');
 
-  const r = await window.pet.chatClaude({ message, sessionId: chatSessionId });
+  const chatProvider = selectedProvider;
+  providerSelect.disabled = true;
+  let r;
+  try { r = await (chatProvider === 'codex' ? window.pet.chatCodex : window.pet.chatClaude)({ message, sessionId: chatSessionId }); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  providerSelect.disabled = false;
   thinking.remove();
   chatBusy = false;
   if (S.state === 'idle') setAnim(S.working || S.procBusy ? 'work' : 'idle');
@@ -1158,7 +1319,8 @@ async function sendChat() {
     // 이전 세션을 못 찾는 경우 새 세션으로 한 번 재시도
     if (chatSessionId) {
       chatSessionId = null;
-      localStorage.removeItem('chatSessionId');
+      localStorage.removeItem('chatSessionId:' + selectedProvider);
+      if (selectedProvider === 'claude') localStorage.removeItem('chatSessionId');
       chatInput.value = message;
       addMsg('pet error', '이전 대화를 못 찾았어요. 다시 한 번 보내주세요!');
     } else {
@@ -1168,7 +1330,7 @@ async function sendChat() {
   }
   if (r.sessionId) {
     chatSessionId = r.sessionId;
-    localStorage.setItem('chatSessionId', chatSessionId);
+    localStorage.setItem('chatSessionId:' + selectedProvider, chatSessionId);
   }
   addMsg('pet', r.reply);
   // 짧은 답이면 펫 말풍선으로도 보여준다
@@ -1181,7 +1343,8 @@ chatInput.addEventListener('keydown', (e) => {
 });
 $('#chat-reset').addEventListener('click', () => {
   chatSessionId = null;
-  localStorage.removeItem('chatSessionId');
+  localStorage.removeItem('chatSessionId:' + selectedProvider);
+      if (selectedProvider === 'claude') localStorage.removeItem('chatSessionId');
   chatLog.innerHTML = '<div class="empty">새 대화를 시작해요 🐾</div>';
 });
 
