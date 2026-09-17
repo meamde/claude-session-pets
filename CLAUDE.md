@@ -115,6 +115,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
   - ⚠️ **실측**: 사용자 기존 펫들에 커스텀 이미지가 저장돼 있으면 도트가 안 보인다("아기새 안 보이는데?"). 커스텀 우선은 의도된 동작 — 세션펫 우클릭·설정 탭 '기본 모습으로'로 복귀.
   - ⚠️ `hidden` 속성이 `.ssprite{display:block}`에 밀려 img·canvas가 겹쳐 보이던 버그 → `[hidden]{display:none!important}` 전역 규칙 필수.
   - `SPET_SIZE`=72(가로)·`SPET_H`=90(세로, 위 24px는 물음표·색종이 이펙트 여백 → 말풍선이 이펙트를 안 가림). `groundY`는 `SPET_H` 기준.
+  - ⚠️ **`.spet{width}`도 `.swrap` 너비(72)와 같게 유지**(1.2.1 실측 버그: 66으로 남아 `.desktop-badge{right:0}`가 몸통 위 엉뚱한 곳에 걸침). 배지는 `bottom:22px; right:-6px`(발 옆), 닫기 버튼 `top:10px`(이펙트 여백 안).
   - 도트는 **정수 배율**이어야 선명 — 메인펫 크기 슬라이더 값과 무관하게 캔버스는 `round(S.size/32)`배로 그린다. 어미는 정사각이 아니라(30×34) **`petH()`**(도트면 캔버스 높이, 아니면 S.size)로 `#pet` 박스 높이·`ground()`를 계산 — 안 그러면 발이 화면 밖으로 잘린다.
   - 회전축은 바닥중앙 고정(cx=0.5, cy=1). 그리드 마지막 행 = 발.
 - **주의**: 세션펫에 저장된 커스텀 이미지(`~/Library/Application Support/claude-session-pets/session-images/<sha1(cwd)>.png`)가

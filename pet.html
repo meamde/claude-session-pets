@@ -164,7 +164,7 @@
   /* ── 세션 펫 (실행 중인 다른 claude 세션들) ── */
   .spet {
     position: absolute; left: 0; top: 0;
-    width: 66px;
+    width: 72px; /* = .swrap 너비(도트 아기 부엉 3x). 배지·말풍선·이름표가 이 박스를 기준으로 정렬된다 */
     z-index: 9;
     cursor: grab;
     will-change: transform;
@@ -172,14 +172,14 @@
   .desktop-badge, .desktop-close { display: none; }
   .spet[data-desktop="true"] .desktop-badge {
     display: flex; align-items: center; justify-content: center;
-    position: absolute; top: 49px; right: 0; width: 18px; height: 16px;
-    background: #243a32; color: #b2e6d0; border: 1px solid #699783;
+    position: absolute; bottom: 22px; right: -6px; width: 18px; height: 16px; /* 발 옆 우하단 (.spet = swrap 90 + 이름표 ~20) */
+    background: #2a2c70; color: #c1c7ff; border: 1px solid #8b95f3;           /* Codex 페리윙클 */
     border-radius: 5px; pointer-events: none;
   }
   .monitor-screen { width: 10px; height: 7px; border: 1px solid currentColor; border-radius: 1px; position: relative; }
   .monitor-screen::after { content: ''; position: absolute; width: 6px; height: 2px; border-bottom: 1px solid currentColor; left: 1px; bottom: -3px; }
   .pet-editing .spet[data-desktop="true"] .desktop-close {
-    display: block; position: absolute; left: -4px; top: 0; width: 26px; height: 26px;
+    display: block; position: absolute; left: -4px; top: 10px; width: 26px; height: 26px;
     border: 1px solid #a3ada7; border-radius: 50%; background: #eef2ef; color: #293b30;
     font: 22px/22px -apple-system, sans-serif; padding: 0; cursor: pointer; z-index: 20;
     box-shadow: 0 2px 5px #0004;

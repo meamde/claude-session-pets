@@ -1,6 +1,6 @@
 {
   "name": "claude-session-pets",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "macOS desktop pets for Claude Code and Codex CLI / desktop sessions",
   "main": "main.js",
   "scripts": {
