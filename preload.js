@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('pet', {
   pickImage: () => ipcRenderer.invoke('pick-image'),
   saveImage: (dataUrl) => ipcRenderer.invoke('save-image', dataUrl),
   getSavedImage: () => ipcRenderer.invoke('get-saved-image'),
+  deleteSavedImage: () => ipcRenderer.invoke('delete-saved-image'),
   onImageChanged: (fn) => ipcRenderer.on('image-changed', (_e, url) => fn(url)),
 
   pickSessionImage: (key) => ipcRenderer.invoke('pick-session-image', key),

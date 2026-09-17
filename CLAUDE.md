@@ -26,11 +26,12 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 
 - `main.js` — Electron 메인. 프로세스 감시(ps/lsof), 상태 훅 설치/업그레이드, 트랜스크립트 판독, tty 명령 주입, `claude -p` 실행
 - `pet.js` — 렌더러. 메인펫/세션펫 상태머신, 말풍선, 패널 UI, 이미지 배경제거
+- `sprites.js` — **도트 기본 캐릭터 렌더러: 부엉이 가족**(pet.js보다 먼저 로드). 아기 부엉 `chick`(24×30, 위 4행 이펙트 여백, 세션펫 3x=72×90) / 어미 부엉 `mother`(30×34, 메인펫 `round(S.size/32)` 정수 배율 → 128 설정=4x=120×136). **정면(치비: 원 실루엣 `silhouette` + `owlEye` 테·흰자·눈동자 시선 px/py)이 기본, `walk`만 옆모습(`chickSide`/`motherSide`, 오른쪽 보기·render()가 scaleX 반전)**. 상태→프레임 함수 테이블(`CHICK`/`MOTHER`), `DotSprite`가 12fps로 캔버스 갱신(`tickAll`을 메인 rAF에서 호출). 팔레트 `PAL.claude`(오렌지·민트 스카프)/`PAL.codex`(페리윙클 `#8b95f3`·노랑 스카프). 시안 히스토리: v1 옆모습 통통 타원 → v2 길쭉("납작해지기만 했다" 피드백) → v3 정면 치비 3후보(뭉치/펭이/부엉) 중 **부엉 채택**(+옆모습 걷기 요청).
 - `pet.html` — 마크업 + 전체 CSS (별도 CSS 파일 없음)
 - `preload.js` — IPC 브리지 (펫 렌더러용)
 - `form-preload.js` — 세션 폼 창(BrowserWindow) 전용 IPC 브리지 (`window.sessionForm.submit/cancel/onOutput/onDone`)
 - `start.sh` — 개발 실행용 (`npx electron .` 백그라운드)
-- `build/icon.icns` — 앱 아이콘 (어른새 SVG를 스쿼클 배경에 얹어 렌더 → icns)
+- `build/icon.icns` — 앱 아이콘 (도트 어미 부엉이). `build/icon.html`(스쿼클 배경 + `DotSprites.paint` 24x, `../sprites.js` 상대 참조 — 레포 루트 기준 file://로 열어야 함)을 Electron `capturePage`로 1024 PNG → `sips`로 iconset → `iconutil -c icns`
 - `lib/codex.js` · `lib/codex-ipc.js` · `lib/codex-hooks.js` · `lib/codex-hook.py` — Codex 연동(CLI/세션 기록, 데스크톱 IPC 호환 계층, 훅 설치기/훅 원본). 1.1.0에서 추가. 개요는 README "Codex 지원" 절
 - `assets/` — 세션 이름표용 서비스 아이콘(claude/codex)
 - `test/` — `npm test`(단위·폼) / `test:ui`(Electron 렌더) / `test:live`(읽기 전용 라이브). **`test/screenshots.cjs`** = README 스크린샷 생성기(더미 데이터, `npx electron test/screenshots.cjs` → `docs/screenshots/*.png`). 패키징 시 test/·docs/·AGENTS.md는 번들에서 제외
@@ -110,8 +111,12 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - **메인펫도 동일 원리 적용됨** (`#sprite`, origin 이미 `50% 100%`): 대부분 keyframe은 이미 `scaleY`만 썼고,
   유일하게 `walkbob`이 `translateY(-9px)`라 걸을 때 바닥이 떠서 → **`translateY` 제거 + 바닥 기준 `rotate+scaleY`로 교체**.
   전단 왜곡 방지 위해 `transform: rotate(...) scaleY(...) scaleX(...)` 순서(회전을 왼쪽=마지막 적용). worky/sleepy와 동일 규칙.
-- **기본 세션펫 캐릭터(`SPET_ICON`/`defaultSpetIcon`)**: 클로드 선버스트 대신 오른쪽 보는 작은 생물 SVG
-  (클로드 오렌지+노란 부리). 회전축이 바닥중앙이라 어떤 캐릭터/커스텀 이미지든 바닥 딛고 갸우뚱
+- **기본 캐릭터 = 도트(1.2.0~)**: 세션펫 `.swrap`(72×90) 안에 `<img class="ssprite" hidden>` + `<canvas class="ssprite dot">` 둘 다 있고, 커스텀 이미지가 없으면 `useDot()`이 캔버스에 `DotSprite('chick')`를 붙인다(`setSprite(url)`=이미지 모드 전환, `resetImage()`=도트 복귀). `enter(state)`가 `dot.setState(state)`로 프레임 세트 전환. 메인펫도 동일(`#sprite` img + `#dot-sprite` canvas, `useMainDot()`/`loadSprite()`, `setAnim`→`mainDot.setState`). 설정 탭 `#reset-image`(`delete-saved-image` IPC)로 커스텀 삭제→도트 복귀.
+  - ⚠️ **실측**: 사용자 기존 펫들에 커스텀 이미지가 저장돼 있으면 도트가 안 보인다("아기새 안 보이는데?"). 커스텀 우선은 의도된 동작 — 세션펫 우클릭·설정 탭 '기본 모습으로'로 복귀.
+  - ⚠️ `hidden` 속성이 `.ssprite{display:block}`에 밀려 img·canvas가 겹쳐 보이던 버그 → `[hidden]{display:none!important}` 전역 규칙 필수.
+  - `SPET_SIZE`=72(가로)·`SPET_H`=90(세로, 위 24px는 물음표·색종이 이펙트 여백 → 말풍선이 이펙트를 안 가림). `groundY`는 `SPET_H` 기준.
+  - 도트는 **정수 배율**이어야 선명 — 메인펫 크기 슬라이더 값과 무관하게 캔버스는 `round(S.size/32)`배로 그린다. 어미는 정사각이 아니라(30×34) **`petH()`**(도트면 캔버스 높이, 아니면 S.size)로 `#pet` 박스 높이·`ground()`를 계산 — 안 그러면 발이 화면 밖으로 잘린다.
+  - 회전축은 바닥중앙 고정(cx=0.5, cy=1). 그리드 마지막 행 = 발.
 - **주의**: 세션펫에 저장된 커스텀 이미지(`~/Library/Application Support/claude-session-pets/session-images/<sha1(cwd)>.png`)가
   있으면 기본 캐릭터 대신 그게 뜬다. 기본 캐릭터 확인은 우클릭 → "기본 모습으로"
 - **우클릭 이미지 설정 메뉴(`showMenu`)**: 세션펫 우클릭 시 컨텍스트 메뉴 (`.spet-menu`, body 직속, 화면당 1개).
@@ -257,6 +262,9 @@ open "/Applications/Claude Session Pets.app"
     메인펫도 동일(원래 `walkbob`만 `translateY`였음). 검증: **실제 앱 자가 capturePage** + `magick mean` 합성(고정점=선명)으로 커스텀 이미지에서 바닥 고정 확인.
     교훈: ① 시각 버그는 **실제 앱 자가 캡처**(화면녹화 권한 불필요)가 결정타 — 인라인 하니스/기본 캐릭터만으론 헛다리(실제 펫은 커스텀 이미지).
     ② "축"만 의심하지 말 것 — **`translateY` 바운스가 축과 무관하게 대상을 움직인다.**
+
+11. **Codex 지원 + v1.1.0 (2026-09)** — Codex CLI·데스크톱·App Server 세션 감지(`lib/`), 테스트 스위트, README 재작성·스크린샷 생성기, iTerm2 창 포커스 수정(`iTermServer` 데몬 인식), GitHub Release.
+12. **기본 캐릭터 → 도트 부엉이 가족 + v1.2.0 (2026-09)** — 세 차례 시안(옆모습 통통 → 길쭉 "납작해지기만 했다" → 정면 치비 3후보)을 거쳐 **부엉이** 채택, 걷기는 옆모습 스프라이트(사용자 요청). `sprites.js` 캔버스 렌더러, 커스텀 이미지 우선, 설정 탭 '기본 모습으로', Codex 색 페리윙클, 도트 아이콘. 교훈: **비율(정면·큰 머리)을 바꿔야 "새롭다"고 느끼지, 타원 파라미터 조정은 "납작해졌다"로 읽힌다.** 시안은 목업 아티팩트에 실제 `sprites.js`를 인라인해 앱과 1:1로 맞췄다.
 
 ## 테스트 방법
 

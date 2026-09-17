@@ -36,7 +36,7 @@ async function main() {
   // 배치: 화면 하단에 일렬로. 메인펫은 오른쪽 끝에.
   await js(`(() => {
     const ids = ${JSON.stringify(ROWS.map(r => r.id))};
-    const xs = [40, 260, 480, 700, 940];
+    const xs = [80, 290, 500, 710, 920];
     ids.forEach((id, i) => { const sp = sessionPets.get(id); if (!sp) return; sp.x = xs[i]; sp.y = sp.groundY(); sp.targetX = null; sp.dir = 1; sp.stateUntil = performance.now() + 1e9; sp.render(); });
     petEl.style.display = 'none';
     const done = sessionPets.get('claude:4102'); done.setWorking('t'); done.setDone();
@@ -82,9 +82,9 @@ async function main() {
   await sleep(500);
   await shoot('usage-tab', await panelRect());
   // 5) 메인펫 + HP바 (5h 세션 / 주간)
-  await js(`document.getElementById('panel').style.display = 'none'; petEl.style.display = ''; document.getElementById('hpbars').style.display = ''; document.getElementById('bubble').style.display = 'none'; S.x = 450; S.y = ground(); petEl.style.transform = 'translate(' + S.x + 'px,' + S.y + 'px)'; refreshUsage(true);`);
+  await js(`document.getElementById('panel').style.display = 'none'; petEl.style.display = ''; document.getElementById('hpbars').style.display = ''; document.getElementById('bubble').style.display = 'none'; S.x = 450; S.y = ground() - 28; S.stateUntil = performance.now() + 1e9; petEl.style.transform = 'translate(' + S.x + 'px,' + S.y + 'px)'; refreshUsage(true);`);
   await sleep(600);
-  const pr = await js(`(() => { const b = petEl.getBoundingClientRect(); return { x: Math.max(0, Math.floor(b.left) - 60), y: Math.max(0, Math.floor(b.top) - 50), width: Math.ceil(b.width) + 120, height: Math.min(520 - Math.floor(b.top) + 50, Math.ceil(b.height) + 60) }; })()`);
+  const pr = await js(`(() => { const b = petEl.getBoundingClientRect(); const y = Math.max(0, Math.floor(b.top) - 50); return { x: Math.max(0, Math.floor(b.left) - 60), y, width: Math.ceil(b.width) + 120, height: 520 - y }; })()`);
   console.log('mainpet rect', pr);
   await shoot('mainpet-hp', pr);
   app.quit();

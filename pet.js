@@ -5,6 +5,8 @@
 const $ = (s) => document.querySelector(s);
 const petEl = $('#pet');
 const spriteEl = $('#sprite');
+const dotEl = $('#dot-sprite');   // 기본 캐릭터(도트 어미새) 캔버스 — 커스텀 이미지가 없을 때만 표시
+let mainDot = null;               // DotSprites.DotSprite 인스턴스 (도트 모드일 때)
 const bubbleEl = $('#bubble');
 const zzzEl = $('#zzz');
 const panelEl = $('#panel');
@@ -45,12 +47,15 @@ const S = {
 const WALK_SPEED = 1.6;
 const GRAVITY = 1.1;
 
-function ground() { return window.innerHeight - S.size; }
+// 펫 박스 높이: 도트 어미새(30×36 그리드)는 정수 배율이라 S.size와 다를 수 있다 → 실제 캔버스 높이 기준
+function petH() { return mainDot ? DotSprites.MOTHER_SIZE[1] * mainDot.scale : S.size; }
+function ground() { return window.innerHeight - petH(); }
 function clampX(x) { return Math.max(0, Math.min(window.innerWidth - S.size, x)); }
 
 function applySize() {
   petEl.style.width = S.size + 'px';
-  petEl.style.height = S.size + 'px';
+  if (mainDot) mainDot.setScale(S.size / 32); // 도트는 정수 배율로만 — 128px=4x(120×144)
+  petEl.style.height = petH() + 'px';
   if (S.state !== 'drag' && S.state !== 'fall') S.y = ground();
 }
 applySize();
@@ -60,6 +65,7 @@ S.y = ground();
 function setAnim(name) {
   petEl.className = petEl.className.replace(/anim-\w+/g, '').trim();
   petEl.classList.add('interactive', 'anim-' + name);
+  if (mainDot) mainDot.setState(name); // 도트 프레임 세트도 같은 상태로
 }
 
 function enterState(state, duration) {
@@ -118,6 +124,7 @@ function tick(t) {
   spriteEl.parentElement.style.transform = `scaleX(${flip})`;
 
   for (const sp of [...sessionPets.values()]) sp.update(dt, t);
+  DotSprites.DotSprite.tickAll(t); // 도트 프레임(12fps 내부 스로틀)
 
   requestAnimationFrame(tick);
 }
@@ -410,24 +417,12 @@ function renderUsageTab(body, u) {
 }
 
 // ── 세션 펫 (실행 중인 다른 claude 세션마다 하나씩) ──────────
-const SPET_SIZE = 66;
+const SPET_SIZE = 72;   // 세션펫 가로 (도트 아기새 3x = 24px×3)
+const SPET_H = 90;      // 세션펫 세로 (30행×3 — 위 24px는 이펙트 여백)
 const SLABEL_H = 20;
 const SPET_SPEED = 1.2;
 
-// 기본 세션펫 캐릭터: 오른쪽을 보는 작은 생물 (클로드 오렌지 + 노란 부리).
-// 회전축은 render()/processImage가 "발"(바닥 밴드 가로중심, 세로는 바닥)로 자동 계산 — 어떤 캐릭터/커스텀 이미지든 발 딛고 갸웃.
-let SPET_ICON = null;
-function defaultSpetIcon() {
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">' +
-    '<path d="M34 96 Q30 60 52 44 Q78 24 96 42 Q112 58 96 82 Q84 100 60 100 Z" fill="#d97757"/>' +
-    '<path d="M44 96 L44 112 L54 112 L54 98 Z" fill="#b85c3e"/>' +
-    '<path d="M70 96 L70 112 L80 112 L80 96 Z" fill="#b85c3e"/>' +
-    '<circle cx="88" cy="52" r="8" fill="#fff"/><circle cx="91" cy="52" r="4" fill="#26211c"/>' +
-    '<path d="M96 58 L114 54 L98 66 Z" fill="#f2b705"/>' +
-    '</svg>';
-  return 'data:image/svg+xml,' + encodeURIComponent(svg);
-}
+// 기본 세션펫 캐릭터 = 도트 아기새 (sprites.js, 24×30 그리드 3x). 커스텀 이미지가 있으면 <img>로 대체.
 
 const sessionPets = new Map(); // pid -> SessionPet
 
@@ -530,9 +525,8 @@ class SessionPet {
     el.innerHTML =
       '<div class="sbubble"></div>' +
       '<div class="shalo"><i></i><i></i><i></i></div>' +
-      '<div class="swrap"><span class="sbody"><span class="sbounce"><img class="ssprite"></span></span></div>' +
+      '<div class="swrap"><span class="sbody"><span class="sbounce"><img class="ssprite" hidden><canvas class="ssprite dot"></canvas></span></span></div>' +
       '<div class="session-caption"><div class="slabel"></div></div>';
-    el.querySelector('.ssprite').src = SPET_ICON;
     el.dataset.provider = this.provider;
     this.el = el;
     el.dataset.desktop = String(isDesktopPet(this));
@@ -547,7 +541,9 @@ class SessionPet {
     close.addEventListener('dblclick', e => e.stopPropagation());
     close.addEventListener('click', e => { e.stopPropagation(); setDesktopPetHidden(this, true); });
     el.append(badge, close);
-    this.spriteEl = el.querySelector('.ssprite');
+    this.spriteEl = el.querySelector('img.ssprite');
+    this.dotEl = el.querySelector('canvas.ssprite');
+    this.dot = null; // 기본 캐릭터(도트 아기새) 렌더러. 커스텀 이미지가 있으면 null
     this.bodyEl = el.querySelector('.sbody');
     this.bubbleEl = el.querySelector('.sbubble');
     this.labelEl = el.querySelector('.slabel');
@@ -569,13 +565,22 @@ class SessionPet {
   async loadImage() {
     try {
       const saved = await window.pet.getSessionImage(this.key);
-      // 저장된 커스텀이 있으면 그것, 없으면 기본 캐릭터 — 둘 다 배경제거+트림을 거친다
-      const r = await processImage(saved || SPET_ICON);
-      this.cx = r.cx ?? 0.5; this.cy = r.cy ?? 0.5; this.spriteEl.src = r.url; this.render();
-    } catch {}
+      // 저장된 커스텀이 있으면 그 이미지(배경제거+트림), 없으면 기본 캐릭터 = 도트 아기새(캔버스)
+      if (saved) await this.setSprite(saved); else this.useDot();
+    } catch { this.useDot(); }
   }
+  // 도트 아기새 모드: 캔버스 표시, 팔레트는 서비스별(Claude 오렌지 / Codex 페리윙클)
+  useDot() {
+    this.spriteEl.hidden = true; this.dotEl.hidden = false;
+    if (!this.dot) this.dot = new DotSprites.DotSprite(this.dotEl, 'chick', this.provider === 'codex' ? 'codex' : 'claude', 3);
+    this.dot.setState(this.state);
+    this.cx = 0.5; this.cy = 1; this.render();
+  }
+  // 커스텀 이미지 모드: <img> 표시, 도트 렌더러 정지
   async setSprite(dataUrl) {
     const r = await processImage(dataUrl);
+    if (this.dot) { this.dot.destroy(); this.dot = null; }
+    this.dotEl.hidden = true; this.spriteEl.hidden = false;
     this.cx = r.cx ?? 0.5; this.cy = r.cy ?? 0.5; this.spriteEl.src = r.url; this.render();
   }
   async assignImage() {
@@ -661,7 +666,7 @@ class SessionPet {
 
   async resetImage() {
     try { await window.pet.deleteSessionImage(this.key); } catch {}
-    await this.setSprite(SPET_ICON); // 기본 캐릭터도 트림+피봇 계산을 거친다
+    this.useDot(); // 기본 캐릭터 = 도트 아기새
     this.showBubble('기본 모습으로 🐾');
     setTimeout(() => this.restoreBubble(), 1500);
   }
@@ -699,7 +704,7 @@ class SessionPet {
     });
   }
 
-  groundY() { return window.innerHeight - SPET_SIZE - SLABEL_H; }
+  groundY() { return window.innerHeight - SPET_H - SLABEL_H; }
 
   setAnim(a) {
     // Animation changes must preserve alert priority while dragging or landing.
@@ -718,6 +723,7 @@ class SessionPet {
       : state === 'fall' ? 'fall'
       : 'idle';
     this.setAnim(a);
+    if (this.dot) this.dot.setState(state); // 도트 프레임 세트 전환 (bye 포함)
   }
 
   // 낙하/드래그가 끝난 뒤 현재 모드에 맞는 상태로 복귀
@@ -860,6 +866,7 @@ class SessionPet {
   }
   destroy() {
     clearTimeout(this._holdTimer);
+    if (this.dot) { this.dot.destroy(); this.dot = null; }
     if (dragPet === this) { dragPet = null; dragging = false; }
     this.el.remove();
     // 조회 실패로 잠깐 사라졌다가 같은 pid로 새 펫이 만들어진 경우,
@@ -911,6 +918,7 @@ class SessionPet {
     // 반전해도 회전 각도가 뒤집히지 않는다. dir(진행 방향) XOR flip(사용자 설정).
     const facing = (this.dir === 1) !== this.flip ? 1 : -1;
     this.spriteEl.style.transform = `scaleX(${facing})`;
+    this.dotEl.style.transform = `scaleX(${facing})`;
     // 회전축 = 바닥중앙(cx=0.5, cy=1). 바닥점 고정, 위에서 좌우로 갸우뚱(역진자).
     // cx=0.5라 미러(facing===-1)해도 1-cx=0.5로 불변 → 방향 바꿔도 축이 안 튄다.
     const ox = facing === -1 ? (1 - this.cx) : this.cx;
@@ -1428,34 +1436,25 @@ function processImage(dataUrl) {
   });
 }
 
-// 메인펫 기본 캐릭터 — 세션펫 아기새(defaultSpetIcon)의 성체 버전(어른새). 오른쪽을 본다.
-function defaultSprite() {
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 140">' +
-    '<path d="M34 88 Q7 88 3 106 Q23 104 42 95 Z" fill="#b85c3e"/>' +               // 꼬리
-    '<path d="M36 98 Q22 70 37 49 Q53 31 84 32 Q113 34 119 61 Q124 88 101 103 Q79 117 55 111 Q42 107 36 98 Z" fill="#d97757"/>' + // 몸통
-    '<ellipse cx="70" cy="86" rx="26" ry="24" fill="#e8ab93"/>' +                    // 밝은 가슴
-    '<path d="M56 57 Q84 49 103 64 Q95 88 66 90 Q50 75 56 57 Z" fill="#c46545"/>' +  // 접힌 날개
-    '<path d="M62 66 Q80 61 94 70" stroke="#a9502f" stroke-width="2.4" fill="none" stroke-linecap="round"/>' +
-    '<path d="M60 75 Q78 71 90 79" stroke="#a9502f" stroke-width="2.2" fill="none" stroke-linecap="round"/>' +
-    '<path d="M90 30 Q104 12 118 13 Q107 25 99 34 Z" fill="#b85c3e"/>' +             // 볏
-    '<circle cx="101" cy="53" r="9" fill="#fff"/><circle cx="104" cy="53" r="4.6" fill="#26211c"/>' +
-    '<circle cx="106" cy="51" r="1.6" fill="#fff"/>' +                              // 눈 하이라이트
-    '<path d="M113 56 L137 51 L113 66 Z" fill="#f2b705"/>' +                         // 부리
-    '<path d="M113 61 L137 51 L125 64 Z" fill="#d99a04"/>' +
-    '<path d="M62 111 L60 129 L53 130" stroke="#a9502f" stroke-width="4.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' + // 다리
-    '<path d="M80 111 L82 129 L89 130" stroke="#a9502f" stroke-width="4.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' +
-    '</svg>';
-  return 'data:image/svg+xml,' + encodeURIComponent(svg);
-}
 
+// 커스텀 이미지 모드: <img> 표시, 도트 어미새 정지
 async function loadSprite(dataUrl) {
   spriteEl.src = (await processImage(dataUrl)).url;
+  if (mainDot) { mainDot.destroy(); mainDot = null; }
+  dotEl.hidden = true; spriteEl.hidden = false;
+  applySize();
+}
+// 기본 캐릭터 = 도트 어미새 (sprites.js). 아기새와 다른 성체: 큰 몸집·3갈래 볏·꼬리깃·속눈썹·긴 부리
+function useMainDot() {
+  spriteEl.hidden = true; dotEl.hidden = false;
+  if (!mainDot) mainDot = new DotSprites.DotSprite(dotEl, 'mother', 'claude', S.size / 32);
+  mainDot.setState((petEl.className.match(/anim-(\w+)/) || [])[1] || 'idle');
+  applySize(); // 박스 높이를 캔버스(144px 등)에 맞추고 바닥 위치 재계산
 }
 
 async function initSprite() {
   const saved = await window.pet.getSavedImage();
-  spriteEl.src = (await processImage(saved || defaultSprite())).url;
+  if (saved) await loadSprite(saved); else useMainDot();
 }
 initSprite();
 
@@ -1477,6 +1476,12 @@ petEl.addEventListener('drop', (e) => {
 });
 
 // ── 설정 ─────────────────────────────────────────────────────
+// 메인펫 '기본 모습으로': 저장된 커스텀 이미지를 지우고 도트 어미새로
+$('#reset-image').addEventListener('click', async () => {
+  try { await window.pet.deleteSavedImage(); } catch {}
+  useMainDot();
+  say('기본 모습으로 🐾', 1500);
+});
 $('#change-image').addEventListener('click', async () => {
   const url = await window.pet.pickImage();
   if (url) say('새 모습 어때요? ✨');
@@ -1536,5 +1541,4 @@ window.pet.onWorkAreaChanged(() => {
 
 // 시작 인사
 setTimeout(() => say('안녕하세요! 클릭하면 메뉴가 열려요 🐾', 4000), 800);
-SPET_ICON = defaultSpetIcon();
 refreshProcs();

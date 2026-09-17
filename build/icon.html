@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;width:1024px;height:1024px;overflow:hidden}
+#bg{position:absolute;left:52px;top:52px;width:920px;height:920px;border-radius:206px;
+ background:linear-gradient(160deg,#f6e2d4 0%,#efcdb8 55%,#e7bea6 100%);
+ box-shadow:inset 0 -14px 0 rgba(120,60,30,.10), inset 0 8px 0 rgba(255,255,255,.55)}
+canvas{position:absolute;left:152px;top:104px;image-rendering:pixelated}
+</style></head><body><div id="bg"></div><canvas id="c"></canvas>
+<script src="../sprites.js"></script>
+<script>
+ const g=DotSprites.DotSprite.frame('mother','idle',0.3);
+ DotSprites.paint(document.getElementById('c'), g, DotSprites.PAL.claude, 24); // 30*24 = 720 × 34*24 = 816px
+</script></body></html>

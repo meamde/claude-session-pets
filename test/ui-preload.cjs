@@ -3,7 +3,7 @@ const noop=()=>{}, row=(id,provider)=>({id:provider+':'+id,provider,sessionId:id
 let rows=[row('11111111-1111-1111-1111-111111111111','claude'),row('22222222-2222-2222-2222-222222222222','codex'),row('33333333-3333-3333-3333-333333333333','codex')];
 contextBridge.exposeInMainWorld('smoke',{setRows:v=>{rows=v}});
 contextBridge.exposeInMainWorld('pet',{
- setIgnoreMouse:noop,quit:noop,getHome:async()=>'/tmp',getSavedImage:async()=>null,getSessionImage:async()=>null,onImageChanged:noop,onWorkAreaChanged:noop,onRunOutput:noop,onRunDone:noop,
+ setIgnoreMouse:noop,quit:noop,getHome:async()=>'/tmp',getSavedImage:async()=>null,deleteSavedImage:async()=>true,getSessionImage:async()=>null,onImageChanged:noop,onWorkAreaChanged:noop,onRunOutput:noop,onRunDone:noop,
  listSessions:async()=>rows,listInjectableTtys:async()=>[],listForms:async()=>[],getUsage:async(force,provider)=>provider==='codex'?{session:{pct:20,minutes:300},weekAll:{pct:30,minutes:10080},windows:[{name:'Codex · 5시간',pct:20,resets:'tomorrow'}]}:{session:{pct:10,resets:'today'},weekAll:{pct:20,resets:'tomorrow'},weeks:[],spans:[]},
  focusAgentSession:async()=>({ok:true}),focusSession:async()=>({ok:true}),openFolder:async()=>({ok:true}),saveSessionImage:async()=>{},deleteSessionImage:async()=>{},codexFormMode:async()=>({ok:true,on:true}),pickImage:async()=>null,
 });

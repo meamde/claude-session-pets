@@ -4,7 +4,7 @@ const noop = () => {};
 let rows = [];
 contextBridge.exposeInMainWorld('shot', { setRows: (v) => { rows = v; } });
 contextBridge.exposeInMainWorld('pet', {
-  setIgnoreMouse: noop, quit: noop, getHome: async () => '/Users/dev', getSavedImage: async () => null,
+  setIgnoreMouse: noop, quit: noop, getHome: async () => '/Users/dev', getSavedImage: async () => null, deleteSavedImage: async () => true,
   getSessionImage: async () => null, onImageChanged: noop, onWorkAreaChanged: noop, onRunOutput: noop, onRunDone: noop,
   listSessions: async () => rows, listInjectableTtys: async () => [], listForms: async () => [],
   getUsage: async (_force, provider) => provider === 'codex'

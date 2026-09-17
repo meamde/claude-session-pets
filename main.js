@@ -110,6 +110,12 @@ ipcMain.handle('save-image', (_e, dataUrl) => {
   return true;
 });
 
+// 메인펫 커스텀 이미지 삭제 → 기본 캐릭터(도트 어미새)로 복귀
+ipcMain.handle('delete-saved-image', () => {
+  try { fs.unlinkSync(IMAGE_PATH()); } catch {}
+  return true;
+});
+
 ipcMain.handle('get-saved-image', () => {
   try {
     const data = fs.readFileSync(IMAGE_PATH());

@@ -5,6 +5,7 @@
 <title>Claude + Codex Session Pets</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* hidden 속성이 .ssprite{display:block} 등에 밀리지 않게 */
   html, body {
     width: 100%; height: 100%;
     background: transparent;
@@ -27,21 +28,23 @@
     width: 100%; height: 100%;
     display: flex; align-items: flex-end; justify-content: center;
   }
-  #sprite {
+  .msprite {
     max-width: 100%; max-height: 100%;
     image-rendering: auto;
     pointer-events: none;
     transform-origin: 50% 100%;
     filter: drop-shadow(0 4px 6px rgba(0,0,0,.25));
   }
+  /* 기본 캐릭터(도트 어미새)는 sprites.js가 캔버스에 그린다. 정수 배율 + 픽셀 보간 없음 */
+  canvas.msprite { image-rendering: pixelated; }
   /* 애니메이션 상태 */
-  #pet.anim-idle #sprite   { animation: breathe 2.4s ease-in-out infinite; }
-  #pet.anim-walk #sprite   { animation: walkbob .45s ease-in-out infinite; }
-  #pet.anim-drag #sprite   { animation: dragswing .8s ease-in-out infinite; }
-  #pet.anim-sleep #sprite  { animation: sleepy 3.5s ease-in-out infinite; }
-  #pet.anim-fall #sprite   { animation: none; transform: scaleY(1.15) scaleX(.9); }
-  #pet.anim-land #sprite   { animation: land .35s ease-out 1; }
-  #pet.anim-work #sprite   { animation: worky .5s ease-in-out infinite; }
+  #pet.anim-idle .msprite   { animation: breathe 2.4s ease-in-out infinite; }
+  #pet.anim-walk .msprite   { animation: walkbob .45s ease-in-out infinite; }
+  #pet.anim-drag .msprite   { animation: dragswing .8s ease-in-out infinite; }
+  #pet.anim-sleep .msprite  { animation: sleepy 3.5s ease-in-out infinite; }
+  #pet.anim-fall .msprite   { animation: none; transform: scaleY(1.15) scaleX(.9); }
+  #pet.anim-land .msprite   { animation: land .35s ease-out 1; }
+  #pet.anim-work .msprite   { animation: worky .5s ease-in-out infinite; }
 
   @keyframes breathe {
     0%,100% { transform: scaleY(1); }
@@ -189,7 +192,7 @@
   /* Alert pets and their bubbles sit above all other pets, below panels/menus. */
   .spet.alerting { z-index: 18; }
   .spet .swrap {
-    width: 66px; height: 66px;
+    width: 72px; height: 90px; /* 도트 아기새 3x = 72×90 (위 24px는 물음표·색종이 등 이펙트 여백) */
     display: flex; align-items: flex-end; justify-content: center;
     transform-origin: 50% 100%; /* 바운스/스케일(뽀용·점프)은 발 딛고 통통 */
     /* position:relative 필수: 없으면(static) 부모 바운스+자식 회전 합성 시 회전축이 우하단으로 틀어진다 (겪은 버그) */
@@ -204,11 +207,13 @@
   .spet .sbounce { display: inline-block; line-height: 0; transform-origin: 50% 100%; }
   .spet .ssprite {
     display: block;
-    max-width: 66px; max-height: 66px;  /* 절대값: 부모(.sbody)가 이미지 크기로 정확히 맞춰지도록 */
+    max-width: 72px; max-height: 72px;  /* 절대값: 부모(.sbody)가 이미지 크기로 정확히 맞춰지도록 (커스텀 이미지) */
     transform-origin: 50% 50%;          /* 좌우반전(scaleX)은 가로중앙 기준 */
     filter: drop-shadow(0 2px 4px rgba(0,0,0,.35));
     pointer-events: none;
   }
+  /* 기본 캐릭터(도트 아기새) 캔버스: sprites.js가 3x(72×90)로 그림. 크기는 JS가 지정 */
+  .spet canvas.ssprite { max-width: none; max-height: none; image-rendering: pixelated; }
   .spet .session-caption {
     display: flex; align-items: center; justify-content: center; gap: 4px;
     margin-top: 3px; margin-left: 50%; transform: translateX(-50%);
@@ -567,9 +572,9 @@
   .provider-row { display:flex; align-items:center; gap:8px; padding:10px 12px 0; font-size:11px; color:#aaa; }
   .provider-row select { background:#33291f; color:#fff; border:1px solid #665044; border-radius:6px; padding:4px 8px; }
   .provider-row span { margin-left:auto; font-size:10px; }
-  .spet[data-provider="codex"] .slabel, .spet[data-provider="codex"] .sbubble { border-color:#60b5a5; }
-  .spet[data-provider="codex"] .sbubble::after { border-top-color:#60b5a5; }
-  #hpbars[data-provider="codex"] .hptrack { border-color:#60b5a5; }
+  .spet[data-provider="codex"] .slabel, .spet[data-provider="codex"] .sbubble { border-color:#8b95f3; }
+  .spet[data-provider="codex"] .sbubble::after { border-top-color:#8b95f3; }
+  #hpbars[data-provider="codex"] .hptrack { border-color:#8b95f3; }
 </style>
 </head>
 <body>
@@ -582,7 +587,7 @@
       <div class="hprow"><span class="hplbl">주간</span><span class="hptrack"><span class="hpfill" id="hp-week"></span></span><span class="hppct" id="hp-week-pct">–</span></div>
     </div>
     <div id="zzz">💤</div>
-    <div id="sprite-wrap"><img id="sprite" alt="pet"></div>
+    <div id="sprite-wrap"><img id="sprite" class="msprite" alt="pet" hidden><canvas id="dot-sprite" class="msprite" width="32" height="32"></canvas></div>
   </div>
 
   <div id="tooltip"></div>
@@ -642,6 +647,7 @@
     <div class="tab-body" data-tab="settings">
       <div class="row">
         <button class="btn" id="change-image">🖼️ 펫 이미지 변경…</button>
+        <button class="btn ghost" id="reset-image" title="커스텀 이미지를 지우고 기본 도트 어미새로">🐾 기본 모습으로</button>
         <span class="hint">또는 이미지를 펫 위로 드래그&드롭</span>
       </div>
       <div class="row">
@@ -677,6 +683,7 @@
     </div>
   </div>
 
+<script src="sprites.js"></script>
 <script src="pet.js"></script>
 </body>
 </html>
