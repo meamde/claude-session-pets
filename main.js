@@ -284,8 +284,19 @@ else:
     if ev == "SessionStart" and data.get("source") not in (None, "startup", "resume"):
         sys.exit(0)
 
+    ntype = ""
     if state == "waiting":
-        # Notification은 턴 종료 60초 후 유휴 알림("waiting for your input")에도 발화된다.
+        # Notification은 권한 요청/질문(진짜 입력 대기) 외에 턴 종료 60초 뒤 유휴 알림("waiting for your input")이나
+        # 기타 안내로도 발화된다. 실측: 긴 도구 실행 중 발화한 알림이 working을 waiting으로 덮어 "입력 필요"로 오표시됨.
+        # → notification_type이 있으면 permission_prompt/elicitation_dialog만, 없으면 메시지가 권한/질문일 때만 waiting.
+        ntype = str(data.get("notification_type") or "")
+        msg = str(data.get("message") or "")
+        if ntype:
+            real = ntype in ("permission_prompt", "elicitation_dialog")
+        else:
+            real = bool(re.search(r"permission|needs your|approv|question|allow", msg, re.I)) and not re.search(r"waiting for your input", msg, re.I)
+        if not real:
+            sys.exit(0)
         # 작업이 중단된 게 아니므로(직전 상태가 working/waiting이 아니면) idle을 덮어쓰지 않는다.
         if prior not in ("working", "waiting"):
             sys.exit(0)
@@ -302,7 +313,9 @@ else:
         task = prev.get("task")
         kind = prev.get("taskKind")
 
-    out = {"state": state, "cwd": cwd, "session_id": sid, "ts": time.time()}
+    out = {"state": state, "cwd": cwd, "session_id": sid, "ts": time.time(), "event": ev}
+    if ntype:
+        out["ntype"] = ntype  # 진단용: 어떤 알림이 waiting을 만들었는지
     if task:
         out["task"] = task
         if kind:
@@ -581,8 +594,12 @@ function projectDir(cwd) {
 //   - 마지막 assistant 메시지의 stop_reason 이 tool_use  → 턴 진행 중(도구 실행 대기)
 //   - end_turn / stop_sequence / max_tokens             → 턴 종료(사용자 입력 대기 = 유휴)
 //   - 마지막이 사용자 프롬프트(text)                     → 응답 대기(작업 시작 직후)
-// 반환: 'midturn' | 'ended' | 'unknown'
-function parseTranscriptFile(filePath) {
+// 반환: { state: 'midturn'|'ended'|'unknown', reason: 'assistant-tool_use'|'assistant-end'|'user-prompt'|null,
+//        tsMs: 판정에 쓴 메시지 항목의 timestamp(ms) 또는 null }
+// ⚠️ ageSec은 파일 mtime이 아니라 이 tsMs로 재야 한다. Claude Code는 세션이 놀고 있어도
+// artifact-autoreact-ledger·artifact-comment-monitor·file-history-snapshot 같은 부기 항목을 계속 덧붙여
+// mtime을 갱신하므로, mtime을 활동으로 읽으면 유휴 세션이 "작업 중→완료"를 반복한다(실측 버그).
+function parseTranscriptTail(filePath) {
   let tail;
   try {
     const fd = fs.openSync(filePath, 'r');
@@ -592,7 +609,7 @@ function parseTranscriptFile(filePath) {
     fs.readSync(fd, buf, 0, len, size - len);
     fs.closeSync(fd);
     tail = buf.toString('utf8');
-  } catch { return 'unknown'; }
+  } catch { return { state: 'unknown', reason: null, tsMs: null }; }
 
   const lines = tail.split('\n').filter(l => l.trim());
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -600,21 +617,24 @@ function parseTranscriptFile(filePath) {
     try { o = JSON.parse(lines[i]); } catch { continue; }
     const msg = o && o.message;
     if (!msg || typeof msg !== 'object') continue;
+    const tsMs = o.timestamp ? (Date.parse(o.timestamp) || null) : null;
     const role = msg.role;
     if (role === 'assistant') {
-      return msg.stop_reason === 'tool_use' ? 'midturn' : 'ended';
+      return msg.stop_reason === 'tool_use' ? { state: 'midturn', reason: 'assistant-tool_use', tsMs } : { state: 'ended', reason: 'assistant-end', tsMs };
     }
     if (role === 'user') {
       // 사용자 프롬프트 제출 후 응답 대기. content는 문자열(순수 텍스트) 또는
       // 배열(text/tool_result 블록 혼합)일 수 있다. 문자열 또는 text 블록이면 프롬프트.
       const c = msg.content;
-      if (typeof c === 'string') return 'midturn';
-      if (Array.isArray(c) && c.some(b => b && b.type === 'text')) return 'midturn';
+      if (typeof c === 'string' || (Array.isArray(c) && c.some(b => b && b.type === 'text'))) return { state: 'midturn', reason: 'user-prompt', tsMs };
       // tool_result(role=user) / attachment 등은 건너뛰고 계속 위로
     }
   }
-  return 'unknown';
+  return { state: 'unknown', reason: null, tsMs: null };
 }
+function parseTranscriptFile(filePath) { return parseTranscriptTail(filePath).state; }
+// 응답 없이 이만큼 지난 user 프롬프트 = 실행되지 않은(대기열에만 남은) 입력. 살아있는 작업으로 보지 않는다.
+const STALE_PROMPT_SEC = 600;
 
 // cwd의 트랜스크립트 세션들을 mtime 내림차순으로 나열한다 (가장 최근이 앞).
 // 같은 cwd에서 세션을 여러 개 돌릴 때 프로세스별로 나눠 배정하기 위함.
@@ -634,11 +654,13 @@ function listSessionsForCwd(cwd) {
     } catch {}
   }
   rows.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return rows.map(r => ({
-    sessionId: r.sessionId,
-    state: parseTranscriptFile(r.file),
-    ageSec: (now - r.mtimeMs) / 1000,
-  }));
+  return rows.map(r => {
+    const t = parseTranscriptTail(r.file);
+    // 활동 시각 = 마지막 '메시지' 항목의 timestamp (없으면 mtime 폴백). 부기 항목 추가는 활동이 아니다.
+    const ageSec = t.tsMs ? Math.max(0, (now - t.tsMs) / 1000) : (now - r.mtimeMs) / 1000;
+    const stalePrompt = t.reason === 'user-prompt' && ageSec > STALE_PROMPT_SEC;
+    return { sessionId: r.sessionId, state: stalePrompt ? 'ended' : t.state, reason: t.reason, ageSec, stalePrompt };
+  });
 }
 
 async function computeProcs() {
@@ -705,6 +727,7 @@ async function computeProcs() {
       const s = sessions[i] || null;
       p.tstate = s ? s.state : 'unknown';
       p.tage = s ? s.ageSec : Infinity;
+      p.tstale = !!(s && s.stalePrompt); // 응답 없이 오래된 user 프롬프트(실행 안 된 대기열 입력) — 훅이 working이어도 유휴로 본다
       // 1순위: 트랜스크립트로 찾은 session_id의 훅. 2순위(트랜스크립트 실패 시): cwd로 직접 매칭한 훅.
       let hs = s ? readHookStatus(s.sessionId) : null;
       if (!hs && hookRows[i]) {

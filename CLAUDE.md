@@ -44,7 +44,11 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
    훅↔프로세스 매칭은 2단계: ① 트랜스크립트로 찾은 session_id로 `readHookStatus` ② 실패 시 **상태 파일의
    `cwd` 필드로 직접 매칭**(`readHookStatusByCwd`). ②가 없으면, **세션 시작 후 프로젝트 폴더가 이동/개명되면**
    현재 cwd 인코딩의 트랜스크립트 디렉토리가 없어 session_id를 못 찾고 → 훅 무시 → CPU 폴백으로 "작업 중" 고착됨(겪은 버그).
-2. **트랜스크립트**: `~/.claude/projects/<인코딩된 cwd>/*.jsonl`의 마지막 turn 경계 (`deriveTranscriptState`).
+2. **트랜스크립트**: `~/.claude/projects/<인코딩된 cwd>/*.jsonl`의 마지막 turn 경계 (`parseTranscriptTail` → `{state, reason, tsMs}`).
+   ⚠️ **활동 시각(`ageSec`)은 파일 mtime이 아니라 마지막 '메시지' 항목의 timestamp**(1.2.2 실측 버그: Claude Code는 유휴 세션에도
+   `artifact-autoreact-ledger`·`artifact-comment-monitor`·`file-history-snapshot` 같은 부기 항목을 덧붙여 mtime을 갱신 → midturn 세션이
+   "작업 중→완료"를 반복). **응답 없이 `STALE_PROMPT_SEC`(600초) 넘은 user 프롬프트**(실행 안 된 대기열 입력)는 `ended`+`stalePrompt` →
+   렌더러 `sessionState`가 훅 `working`보다 우선해 idle로 판정(UserPromptSubmit만 발화하고 Stop이 없어 훅이 30분간 working에 고착되던 것 방지).
    cwd 인코딩은 **비영숫자 전부 `-` 치환** (`my_project`→`my-project`, 연속 대시 유지).
    훅 매칭(sessionId)도 이 디렉토리에서 찾으므로 인코딩이 틀리면 (위 cwd 폴백이 없던 시절) 훅까지 통째로 실패함
 3. **CPU 폴백**: 누적 CPU 시간 증가 여부 (렌더러 `sessionState`)
@@ -56,8 +60,10 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - 설치: `~/.claude/settings.json`의 hooks에 UserPromptSubmit/PreToolUse/PostToolUse/Stop/Notification/SessionStart/SessionEnd 등록
 - **PostToolUse→working**: 권한 승인/AskUserQuestion 답변은 발화되는 훅이 없어서, 도구 종료 시점에
   waiting→working으로 복귀시키는 용도 (없으면 승인 후에도 "입력 필요"가 계속 떠 있음)
-- **waiting 가드**: Notification은 턴 종료 60초 후 유휴 알림에도 발화되므로,
-  직전 상태가 working/waiting일 때만 waiting을 기록 (아니면 idle을 덮어써서 "작업 완료"가 "입력 필요"로 바뀜)
+- **waiting 가드**: Notification은 권한 요청/질문 외에 턴 종료 60초 후 유휴 알림·기타 안내로도 발화된다.
+  ① `notification_type`이 있으면 `permission_prompt`/`elicitation_dialog`만, 없으면 메시지가 권한/질문일 때만 waiting
+  (1.2.2 실측: 긴 도구 실행 중 발화한 알림이 working을 waiting으로 덮어 "입력 필요" 오표시). ② 그리고 직전 상태가 working/waiting일 때만 기록
+  (아니면 idle을 덮어써서 "작업 완료"가 "입력 필요"로 바뀜). 상태 파일에 `event`·`ntype`을 남겨 다음 진단에 쓴다.
 - **앱 시작 시 `upgradeHooksIfInstalled()`가 기존 설치를 자동으로 최신화** (설정에 `session-pets-hook.py` 마커가 있으면)
 - 스크립트 파일 갱신은 실행 중인 세션에도 **즉시 적용** (매 호출마다 python3가 새로 읽음).
   settings.json의 이벤트 추가/변경은 **새로 시작하는 세션부터** 적용
@@ -266,6 +272,8 @@ open "/Applications/Claude Session Pets.app"
 
 11. **Codex 지원 + v1.1.0 (2026-09)** — Codex CLI·데스크톱·App Server 세션 감지(`lib/`), 테스트 스위트, README 재작성·스크린샷 생성기, iTerm2 창 포커스 수정(`iTermServer` 데몬 인식), GitHub Release.
 12. **기본 캐릭터 → 도트 부엉이 가족 + v1.2.0 (2026-09)** — 세 차례 시안(옆모습 통통 → 길쭉 "납작해지기만 했다" → 정면 치비 3후보)을 거쳐 **부엉이** 채택, 걷기는 옆모습 스프라이트(사용자 요청). `sprites.js` 캔버스 렌더러, 커스텀 이미지 우선, 설정 탭 '기본 모습으로', Codex 색 페리윙클, 도트 아이콘. 교훈: **비율(정면·큰 머리)을 바꿔야 "새롭다"고 느끼지, 타원 파라미터 조정은 "납작해졌다"로 읽힌다.** 시안은 목업 아티팩트에 실제 `sprites.js`를 인라인해 앱과 1:1로 맞췄다.
+
+13. **유휴 세션 "작업 완료" 반복 수정 + v1.2.2 (2026-09)** — 원인 ① 트랜스크립트 활동 시각을 mtime으로 재서 유휴 중 부기 항목 추가마다 완료 반복 → 마지막 메시지 timestamp 기준(`parseTranscriptTail`). ② 실행되지 않은 대기열 프롬프트(user 텍스트만 남고 Stop 없음)로 훅 working 고착 → `stalePrompt`(600초) 우선 idle. ③ 긴 도구 실행 중 Notification이 waiting으로 덮음 → `notification_type` 가드. 진단 방법: 상태 파일 `state/ts`, 트랜스크립트 tail의 항목 유형·timestamp를 파이썬으로 나열해 유휴 구간에 무엇이 붙었는지 확인(`test/transcript.test.cjs`에 재현).
 
 ## 테스트 방법
 

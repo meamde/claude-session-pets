@@ -953,6 +953,9 @@ function procName(p) {
 function sessionState(p, t, now) {
   if (p.disconnected) return t.mode;
   if (p.provider === 'codex') return p.state || 'idle';
+  // 훅이 working이어도, 트랜스크립트의 마지막 메시지가 응답 없이 오래된 user 프롬프트(실행되지 않은 대기열 입력)면 유휴.
+  // UserPromptSubmit만 발화하고 Stop이 안 온 채 멈춘 훅 상태가 30분(HOOK_TTL) 동안 "작업 중"으로 고착되는 것을 막는다(실측).
+  if (p.hookState === 'working' && p.tstale) return 'idle';
   if (p.hookState && p.hookAge < HOOK_TTL) {   // 훅이 최우선 (가장 정확)
     if (p.hookState === 'working') return 'working';
     if (p.hookState === 'waiting') return 'waiting';
