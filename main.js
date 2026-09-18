@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, dialog, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, Tray, Menu, nativeImage, systemPreferences, shell } = require('electron');
 const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -571,6 +571,18 @@ function execFileP(cmd, args, strict = false) {
 }
 
 // "mm:ss.ss" / "hh:mm:ss" 형태의 누적 CPU 시간을 초(실수)로 변환
+// Claude Code 내부 도우미 프로세스 판별 — 사용자 세션이 아니므로 펫을 만들지 않는다.
+// 실측(2026-09, Claude Code 데몬 도입 후): `claude daemon run …`, `claude bg-pty-host --bg-pty-host /tmp/cc-daemon-<uid>/<id>/spare/….pty.sock`,
+// `claude bg-spare --bg-spare …claim.sock`, `ClaudeCode.app/Contents/MacOS/claude --bg-pty-host …`가 실행 파일 이름이 'claude'라
+// 기존 필터를 통과했고, cwd가 `/private/tmp/cc-daemon-…/spare`여서 "spare"라는 이름의 펫이 여러 마리 떴다.
+const INTERNAL_CLAUDE_ARGS = /(^|\s)(daemon|bg-pty-host|bg-spare)(\s|$)|--bg-(pty-host|spare)(\s|$)|--spawned-by(\s|$)/;
+function isInternalClaudeHelper(command, cwd) {
+  const rest = command.trim().split(/\s+/).slice(1).join(' ');
+  if (INTERNAL_CLAUDE_ARGS.test(rest)) return true;
+  if (cwd && /^(\/private)?\/tmp\/cc-daemon-/.test(cwd)) return true;
+  return false;
+}
+
 function cputimeToSec(s) {
   const parts = s.split(':').map(Number);
   if (parts.some(isNaN)) return 0;
@@ -683,6 +695,7 @@ async function computeProcs() {
       /\/\.local\/(bin|share)\/claude$/.test(first) ||
       /\/\.claude\/local\/claude$/.test(first);
     if (!isClaude) continue;
+    if (isInternalClaudeHelper(command)) continue; // 데몬/spare pty 도우미 — 세션 아님
     procs.push({
       pid: Number(pid),
       ppid: Number(ppid),
@@ -706,6 +719,8 @@ async function computeProcs() {
         if (p) p.cwd = l.slice(1);
       }
     }
+    // cwd가 cc-daemon 아래인 것도 내부 도우미(spare) — 2차 제외
+    for (let i = procs.length - 1; i >= 0; i--) if (isInternalClaudeHelper(procs[i].command, procs[i].cwd)) procs.splice(i, 1);
   }
   // 상태 판독: 훅(가장 정확) → 트랜스크립트 → (렌더러에서 CPU 폴백)
   // 같은 cwd에 세션이 여러 개면 트랜스크립트 하나만 보면 모든 펫이 같은 상태로 보인다.
@@ -1050,6 +1065,14 @@ on run argv
   return "notfound"
 end run`;
 
+// 손쉬운 사용 권한 요청: 시스템 다이얼로그는 1분에 한 번만(더블클릭마다 뜨면 성가심), 설정의 손쉬운 사용 화면은 매번 연다.
+// (실측: 실행당 1회로 제한했더니, 사용자가 설정에서 항목을 제거한 뒤 다시 눌러도 다이얼로그가 안 떠 막막했음)
+let accessibilityPromptedAt = 0;
+function requestAccessibility() {
+  const now = Date.now();
+  if (now - accessibilityPromptedAt > 60000) { accessibilityPromptedAt = now; try { systemPreferences.isTrustedAccessibilityClient(true); } catch {} }
+  try { shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'); } catch {}
+}
 ipcMain.handle('focus-session', async (_e, { pid, tty, cwd }) => {
   const host = await findHostApp(pid);
   const dev = tty ? (tty.startsWith('/dev/') ? tty : '/dev/' + tty) : null;
@@ -1072,14 +1095,31 @@ ipcMain.handle('focus-session', async (_e, { pid, tty, cwd }) => {
 
   // 그 외(IntelliJ/VS Code 등): 프로젝트 폴더명으로 정확한 창을 먼저 raise 시도
   if (host) {
-    const base = cwd && !cwd.startsWith('pid:') ? path.basename(cwd) : null;
-    if (base) {
+    // System Events로 창을 다루려면 손쉬운 사용(Accessibility) 권한이 필요하다.
+    // ⚠️ 실측: 앱이 ad-hoc 서명(지정 요구사항 = cdhash)이라 재빌드마다 서명이 바뀌고, macOS TCC는 서명 기준으로 권한을 기억하므로
+    // 빌드할 때마다 이전에 준 권한이 무효화된다. 그때 osascript는 -25211("보조 접근이 허용되지 않습니다")로 실패하는데
+    // 이를 인식하지 못하고 아래 '앱 통째 activate'로 폴백해 "정확한 창 raise가 안 된다"로 보였다.
+    // → 먼저 권한을 확인하고, 없으면 시스템 프롬프트(설정 열기)를 띄우고 'accessibility'로 알린다.
+    if (systemPreferences && typeof systemPreferences.isTrustedAccessibilityClient === 'function' && !systemPreferences.isTrustedAccessibilityClient(false)) {
+      requestAccessibility();
+      return { ok: false, error: 'accessibility' };
+    }
+    // 창 제목 후보: cwd 폴더명 → 상위 폴더명들(홈 제외). IntelliJ 창 제목은 "프로젝트 – 파일"이라 하위 모듈 폴더(cwd)명이
+    // 없고 프로젝트(상위) 이름만 있을 수 있다(실측: 프로젝트 루트 아래 myproj/module 같은 하위 모듈에서 세션을 띄운 경우).
+    const needles = [];
+    if (cwd && !cwd.startsWith('pid:')) {
+      let dir = cwd; const home = os.homedir();
+      while (dir && dir !== '/' && dir !== home && needles.length < 4) { const b = path.basename(dir); if (b) needles.push(b); dir = path.dirname(dir); }
+    }
+    for (const needle of needles) {
       const r = await new Promise((res) =>
-        execFile('osascript', ['-e', GUI_WINDOW_FOCUS, host.appName, base], { timeout: 8000 }, (err, out, se) =>
+        execFile('osascript', ['-e', GUI_WINDOW_FOCUS, host.appName, needle], { timeout: 8000 }, (err, out, se) =>
           res({ err, out: (out || '').trim(), se: String(se || '') })));
-      if (!r.err && r.out === 'ok') return { ok: true, app: host.appName, window: base };
+      if (!r.err && r.out === 'ok') return { ok: true, app: host.appName, window: needle };
       if (r.err && /not authoriz|1743|-1743/i.test(r.se)) return { ok: false, error: 'automation' };
-      // notfound/noproc(제목에 폴더명 없음 등) → 아래 앱 통째 activate로 폴백
+      if (r.err && /25211|assistive|보조 접근/i.test(r.se)) { requestAccessibility(); return { ok: false, error: 'accessibility' }; }
+      if (r.out === 'noproc') break;
+      // notfound(제목에 폴더명 없음) → 다음 상위 폴더명으로 재시도, 다 실패하면 아래 앱 통째 activate로 폴백
     }
     // 폴백: 앱 번들을 앞으로 (특정 창 매칭 실패 시)
     const openArgs = host.bundlePath ? ['-a', host.bundlePath] : ['-b', host.bundleId];

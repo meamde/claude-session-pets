@@ -53,6 +53,8 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
    훅 매칭(sessionId)도 이 디렉토리에서 찾으므로 인코딩이 틀리면 (위 cwd 폴백이 없던 시절) 훅까지 통째로 실패함
 3. **CPU 폴백**: 누적 CPU 시간 증가 여부 (렌더러 `sessionState`)
 
+**프로세스 필터 제외(`isInternalClaudeHelper`)**: Claude Code 데몬 도입(2026-09) 후 `claude daemon run …`·`claude bg-pty-host --bg-pty-host /tmp/cc-daemon-<uid>/<id>/spare/….pty.sock`·`claude bg-spare …`·`ClaudeCode.app/…/claude --bg-pty-host …`가 실행 파일 이름 'claude'로 필터를 통과해 cwd `/private/tmp/cc-daemon-…/spare` → **"spare" 펫이 여러 마리** 뜬 실측 버그. 인자(`daemon|bg-pty-host|bg-spare|--bg-*|--spawned-by`) 또는 cwd(`/tmp/cc-daemon-`)로 제외. 판정은 첫 토큰 이후 인자만 검사(프롬프트 텍스트 오탐 방지). 테스트 `test/procs.test.cjs`.
+
 ### 상태 훅 (중요)
 
 - **원본은 `main.js`의 `HELPER_SRC`** (파이썬 스크립트를 JS 템플릿 리터럴로 내장).
@@ -129,6 +131,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - **우클릭 이미지 설정 메뉴(`showMenu`)**: 세션펫 우클릭 시 컨텍스트 메뉴 (`.spet-menu`, body 직속, 화면당 1개).
   항목: 창 앞으로 가져오기(기존 우클릭 동작 흡수) / Finder에서 작업 폴더 열기(`open-folder` IPC → `open <cwd>`) / 이미지 변경… / 좌우 반전(토글) / 기본 모습으로(`deleteSessionImage`+CLAUDE_ICON 복귀).
   바깥 클릭 시 닫힘(캡처 단계 mousedown), farewell 시 `closeSpetMenu()`. **더블클릭=창 앞으로 가져오기(`focusWindow`)**, 드롭(이미지 지정)은 유지. (이미지 변경은 우클릭 메뉴·드롭으로만)
+  - ⭐ **"IntelliJ 정확한 창 raise가 안 된다"(2026-09 실측) = 손쉬운 사용 권한 무효화**. 앱이 ad-hoc 서명(`codesign -s -`)이라 지정 요구사항이 `cdhash H"…"`(빌드마다 바뀜)이고, macOS TCC는 그 서명으로 권한을 기억한다 → **재빌드할 때마다 손쉬운 사용·자동화 권한이 풀린다**. 그때 System Events는 `-25211 보조 접근이 허용되지 않습니다`로 실패하는데 코드가 `-1743`(자동화)만 잡아 `open -a` 앱 통째 활성화로 조용히 폴백 → "안 된다"로 보임. 수정: `systemPreferences.isTrustedAccessibilityClient(false)`로 선확인 → 없으면 `(true)`로 시스템 프롬프트 + `error:'accessibility'` 말풍선. **근본 해결 = 지정 요구사항 고정**: `build-app.sh`가 ① 전체 deep ad-hoc 서명 → ② 바깥 번들만 `codesign --force --sign - --requirements '=designated => identifier "<번들ID>"'`로 다시 서명(deep 없이 — 내부 프레임워크는 식별자가 달라 같은 요구사항을 붙이면 `nested code is modified or invalid`). DR이 cdhash가 아니라 식별자라 재빌드 후에도 TCC가 같은 앱으로 인식. **적용 첫 빌드 뒤 한 번은 설정에서 토글 off→on(기존 항목은 옛 cdhash 기준)**. 별도 인증서(`scripts/make-signing-cert.sh`, `SIGN_ID`)는 선택 사항. 권한 다이얼로그는 1분에 1회(`requestAccessibility`, 실행당 1회로 했더니 항목 제거 후 재요청이 안 떠서 변경) + 설정의 손쉬운 사용 화면(`x-apple.systempreferences:…Privacy_Accessibility`)을 매번 연다. 창 제목 검색은 cwd basename → 상위 폴더명 순(IntelliJ 제목은 "프로젝트 – 파일"이라 모듈 하위 폴더명이 없을 수 있음).
   - **창 앞으로 가져오기 호스트 판정(`findHostApp`)**: pid 조상 체인에서 `*.app/Contents/MacOS/` 경로를 찾는다. ⚠️ **iTerm2는 셸을 `~/Library/Application Support/iTerm2/iTermServer-<ver>` 데몬(launchd 직속) 아래에 띄워** 체인에 `.app`이 없다(실측: claude←zsh←login←iTermServer←launchd) → 데몬 이름으로 iTerm2 인식(`bundleId: com.googlecode.iterm2`, `open -b` 폴백). 안 하면 `nohost` → "창을 찾지 못했어요". tmux 서버도 launchd 직속이라 여전히 불가.
 
 ## 사용량 표시 (/usage) — 메인펫 HP바 + 사용량 탭
@@ -274,6 +277,8 @@ open "/Applications/Claude Session Pets.app"
 12. **기본 캐릭터 → 도트 부엉이 가족 + v1.2.0 (2026-09)** — 세 차례 시안(옆모습 통통 → 길쭉 "납작해지기만 했다" → 정면 치비 3후보)을 거쳐 **부엉이** 채택, 걷기는 옆모습 스프라이트(사용자 요청). `sprites.js` 캔버스 렌더러, 커스텀 이미지 우선, 설정 탭 '기본 모습으로', Codex 색 페리윙클, 도트 아이콘. 교훈: **비율(정면·큰 머리)을 바꿔야 "새롭다"고 느끼지, 타원 파라미터 조정은 "납작해졌다"로 읽힌다.** 시안은 목업 아티팩트에 실제 `sprites.js`를 인라인해 앱과 1:1로 맞췄다.
 
 13. **유휴 세션 "작업 완료" 반복 수정 + v1.2.2 (2026-09)** — 원인 ① 트랜스크립트 활동 시각을 mtime으로 재서 유휴 중 부기 항목 추가마다 완료 반복 → 마지막 메시지 timestamp 기준(`parseTranscriptTail`). ② 실행되지 않은 대기열 프롬프트(user 텍스트만 남고 Stop 없음)로 훅 working 고착 → `stalePrompt`(600초) 우선 idle. ③ 긴 도구 실행 중 Notification이 waiting으로 덮음 → `notification_type` 가드. 진단 방법: 상태 파일 `state/ts`, 트랜스크립트 tail의 항목 유형·timestamp를 파이썬으로 나열해 유휴 구간에 무엇이 붙었는지 확인(`test/transcript.test.cjs`에 재현).
+
+14. **IntelliJ 정확한 창 raise·권한·spare 펫 + v1.2.3 (2026-09)** — ① ad-hoc 서명(cdhash DR) 때문에 재빌드마다 손쉬운 사용 권한이 풀려 창 raise가 조용히 폴백 → `isTrustedAccessibilityClient` 선확인·1분 간격 재요청·설정 화면 열기, **`build-app.sh`가 바깥 번들 DR을 번들 식별자로 고정**(내부는 deep ad-hoc). ② 창 제목 검색 cwd → 상위 폴더명 재시도. ③ Claude Code 데몬 도우미(`daemon`/`bg-pty-host`/`bg-spare`, cwd `/tmp/cc-daemon-…/spare`)를 세션으로 오인한 "spare" 펫 → `isInternalClaudeHelper` 제외. 릴리스는 사용자 요청 시에만(메모리 규칙).
 
 ## 테스트 방법
 

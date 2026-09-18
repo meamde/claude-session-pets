@@ -36,7 +36,7 @@ echo "🔨 [1/4] electron-packager로 .app 빌드 중…"
 npx electron-packager . "$APP_NAME" \
   --platform=darwin --arch="$ARCH" \
   --out="$OUT_DIR" --overwrite \
-  --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh" --ignore="^/build-app.sh" --ignore="^/test" --ignore="^/docs" --ignore="^/AGENTS.md" --ignore="^/\.git($|/)"
+  --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh" --ignore="^/build-app.sh" --ignore="^/test" --ignore="^/docs" --ignore="^/scripts" --ignore="^/AGENTS.md" --ignore="^/\.git($|/)"
 
 # electron-packager --icon이 적용 안 되는 버그가 있어 icns를 직접 교체
 echo "🎨 [2/4] 앱 아이콘 교체…"
@@ -45,7 +45,21 @@ cp build/icon.icns "$BUILT_APP/Contents/Resources/electron.icns"
 # icns 교체 등으로 번들 seal이 깨지므로 ad-hoc 재서명 (없으면 다른 맥에서 "손상됨")
 echo "✍️  [3/4] ad-hoc 재서명…"
 codesign --remove-signature "$BUILT_APP" 2>/dev/null || true
-codesign --force --deep --sign - "$BUILT_APP"
+# 서명 신원: 로컬 개발 인증서가 있으면 그것(권한 유지), 없으면 ad-hoc.
+#   ad-hoc은 지정 요구사항이 cdhash라 빌드마다 바뀌어 손쉬운 사용·자동화 권한이 매번 풀린다 → scripts/make-signing-cert.sh 로 생성 권장
+SIGN_ID="${SIGN_ID:-Claude Session Pets Dev}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+  echo "   서명 신원: $SIGN_ID (권한 유지)"
+  codesign --force --deep --sign "$SIGN_ID" "$BUILT_APP"
+else
+  # ad-hoc이라도 바깥 번들의 '지정 요구사항'을 cdhash 대신 번들 식별자로 고정하면 macOS TCC(손쉬운 사용·자동화)가
+  # 재빌드 후에도 같은 앱으로 인식해 권한이 유지된다. 내부 코드(프레임워크·헬퍼)는 식별자가 달라 요구사항을 못 붙이므로
+  # ① 전체를 deep ad-hoc 서명 → ② 바깥 번들만 식별자 요구사항으로 다시 서명 (deep 없이).
+  BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$BUILT_APP/Contents/Info.plist")
+  echo "   서명 신원: ad-hoc + 지정 요구사항 identifier \"$BUNDLE_ID\" (권한 유지)"
+  codesign --force --deep --sign - "$BUILT_APP"
+  codesign --force --sign - --requirements "=designated => identifier \"$BUNDLE_ID\"" "$BUILT_APP"
+fi
 codesign --verify --deep --strict "$BUILT_APP"
 echo "   서명 검증 통과 ✓"
 

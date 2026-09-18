@@ -599,6 +599,8 @@ class SessionPet {
     if (r.ok) flash('여기예요! 👀');
     else if (r.error === 'automation')
       flash('자동화 권한이 필요해요 ⚙️');
+    else if (r.error === 'accessibility')
+      flash('손쉬운 사용 권한을 켜주세요 ⚙️ 설정을 열었어요 — 목록에 없으면 + 로 앱 추가');
     else if (r.error === 'nohost')
       flash('창을 찾지 못했어요 🤔');
     else flash('앞으로 못 가져왔어요 😿');

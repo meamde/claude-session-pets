@@ -19,3 +19,6 @@ docs/form/
 # Codex session form inbox
 .session-pets/
 __pycache__/
+
+# 편집기 스왑 파일
+*.swp
