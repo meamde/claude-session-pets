@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude Session Pets 실행 스크립트
+# Hoo 실행 스크립트
 set -e
 cd "$(dirname "$0")"
 
@@ -16,6 +16,6 @@ if pgrep -f "$(pwd)/node_modules/electron" > /dev/null; then
 fi
 
 echo "🐦 펫을 깨우는 중…"
-nohup npx electron . > /tmp/claude-session-pets.log 2>&1 &
+nohup npx electron . > /tmp/hoo.log 2>&1 &
 disown
-echo "완료! 로그: /tmp/claude-session-pets.log"
+echo "완료! 로그: /tmp/hoo.log"

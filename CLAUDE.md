@@ -1,11 +1,11 @@
-# CLAUDE.md — Claude Session Pets 개발 가이드
+# CLAUDE.md — Hoo (구 Claude Session Pets) 개발 가이드
 
 macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시해 세션마다 작은 펫을 띄우고,
 작업 상태·현재 작업 내용을 말풍선으로 보여준다. 기능 개요는 README.md 참고.
 
 ## ⚠️ 공개 저장소 — 회사/개인정보 유출 금지 (커밋·푸시 전 필수 점검)
 
-이 저장소는 **공개(public) GitHub 저장소**(`git@github.com:meamde/claude-session-pets.git`)다.
+이 저장소는 **공개(public) GitHub 저장소**(`git@github.com:meamde/hoo-the-agent-pets.git`, 구 claude-session-pets — GitHub가 옛 주소를 새 주소로 연결)다.
 파일 내용뿐 아니라 **커밋 메시지 본문까지** 그대로 공개된다. 아래는 코드·주석·문서·커밋 메시지 **어디에도** 넣지 말 것:
 
 - **회사 관련 이름**: 회사명, 사내 프로젝트/모듈/서비스/저장소명, 사내 세션 이름 등. (실측 버그 사례를 적을 때도 실제 사내 이름을 쓰지 말고 **중립 예시**(`myorg`, `myproj`, `myproj-e4`, `sampleproj` 등)로 치환.)
@@ -17,6 +17,7 @@ macOS 데스크탑 펫(Electron). 실행 중인 Claude CLI 세션들을 감시�
 git ls-files | grep -vE 'package-lock.json|icon.icns' | xargs grep -niE "회사명|사내프로젝트명|사용자실명|/Users/[a-z]|token|secret|password" 2>/dev/null
 git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메시지 본문도 점검
 ```
+**릴리스 첨부 파일(zip)도 공개 배포물이다.** 빌드는 git 추적 여부와 무관하게 작업 폴더 파일을 앱에 넣는다 → v1.0.0~v1.2.3 zip에 로컬 `.claude/settings.local.json`(사내 경로 포함)이 섞여 공개됐고, 해당 릴리스 7개를 삭제했다(2026-09, 태그는 유지). 재발 방지: `build-app.sh`가 루트 점 파일·로그·캐시를 제외하고, 빌드 뒤 앱 코드에 `$HOME` 경로·사용자명이 있으면 중단한다. 릴리스 전 `unzip -l <zip> | grep -E '/\\.'`로 점 파일이 없는지도 확인.
 이미 커밋/푸시된 뒤 발견되면: 현재 파일 수정만으론 부족하고 **히스토리 재작성 + force push**가 필요하다(과거 커밋의 파일·메시지에 남아 있으므로).
 - 방법: `git filter-branch --tree-filter '<파일 perl 치환>' --msg-filter '<메시지 perl 치환>' -- --all` 후 `refs/original/` 삭제 → `git push --force`.
 - ⚠️ 치환 시 **일반 영어 단어 오염 주의**: 예로 `package-lock.json`의 `"purchased"`(회사와 무관)를 건드리지 않도록 `purchase(?!d)` 같은 정규식 경계를 쓸 것.
@@ -100,7 +101,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
   - **점프**: `.spet.alerting .sbounce`에 `sp-jump`(done뿐 아니라 wait/form도 점프).
   - **에스컬레이션 스포트라이트**: `alertSince`(알림 시작 시각) 기록 → `updateAlertDim()`(1초 간격)이 `now-alertSince > ESCALATE_MS`(22초)면 `#alert-dim`.on. **딤은 `z-index:-1`** — 투명 오버레이라 배경(데스크탑)만 어두워지고 펫(z:9)·메인펫·패널은 그대로 위에 밝게 뜬다.
   - **설정 토글**: `S.haloOn`(`localStorage['alertHalo']`)·`S.spotlightOn`(`alertSpotlight`), ⚙️ 설정 탭. 링 off는 `body.no-halo`로 `.shalo` 숨김, 스포트라이트 off는 `updateAlertDim`에서 딤 스킵. 둘 다 기본 on.
-- 세션펫 말풍선(.sbubble)은 최대 250px에서 줄바꿈 (자르지 않음 — "…" 금지가 사용자 요구사항)
+- 세션펫 말풍선(.sbubble)은 최대 250px에서 줄바꿈. ~~자르지 않음("…" 금지)~~ → 펫별 창(280×200)에선 위쪽 여유가 ~78px라 긴 글이 창 위에서 잘렸다 → **사용자 요청(2026-09 "요약하려면 사이즈 맞춰")으로 안쪽 `.sbtext`를 최대 3줄(큰 완료 말풍선 2줄)로 줄 수 제한 + 끝 …**. 폼 응답 프롬프트는 전문 대신 `📋 폼 응답 반영: 첫 항목 제목`(`workBubbleText`). 메인펫 `#bubble .btext`도 3줄, `TOP_PAD` 150.
 - **좌우 반전(`this.flip`)**: `render()`에서 `facing = (dir===1) !== flip ? 1 : -1`.
   요소 3층 구조로 회전 피봇과 반전을 분리한다:
   - `.swrap` (66×66 flex, 하단중앙 정렬) — 레이아웃만
@@ -187,6 +188,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 - **⭐ 폼 우선순위(done/wait보다 위)**: 폼 생성 후 턴이 끝나면 detectEvents가 `setDone()`을 불러 "작업 완료!"가 폼 말풍선을 덮던 버그가 있었다(폴링과 checkForms가 별개라, `setDone`이 `sticky`만 'done'으로 바꾸고 `pendingForm`은 남아 checkForms의 `id` 비교가 재표시를 막음). → **`setDone`/`setWaiting`은 `pendingForm`이 있으면 즉시 return**(폼 우선), **`checkForms`는 폼이 있는데 `sticky!=='form'`(덮임)이면 폼 말풍선 복원**, `landRestore`도 form→wait로 복귀. 즉 폼이 존재하는 한 항상 📋가 이긴다.
 - **표시/제출**: 클릭 → `open-form(id)` IPC가 JSON을 **앱이 HTML로 렌더**(`renderFormHtml`, 내용은 escape → XSS 안전)해 공용 폴더에 `<id>.html` 저장 후 폼 창 로드. cwd·id는 HTML에 직접 박음(CTX).
   [전송] → `submit-form(id)` IPC 라우팅 우선순위: ① 폼의 `sessionName` → 그 이름으로 크로스세션 relay(정확+터미널 표시) ② 폼의 `sessionId` → 헤드리스 `claude -p -r <sid>`(정확, 터미널 X) ③ 구버전 → cwd로 `resolvePeerName` relay/헤드리스 폴백. claude 실행 cwd는 폼의 `cwd` 필드. 완료 시 공용 폴더 `done/`으로 이동(+`.answer.json`).
+- **폼 디자인(가독성)**: 문서형 밝은 테마 + 창 1240×min(1000, 작업 영역)·가운데, 폭 980px 이상이면 카드가 2단(왼쪽 `.cmain` = 흐름도·설명·표·제안, 오른쪽 `.ask` = 선택지, sticky)·좁으면 1단(사용자 선택: A 문서형 + C 2단, 2026-09). 요약(`summary`)·흐름도(`diagram`)·비교표(`table`)는 선택 필드 — 작성 지시문에서 적극 쓰라고 안내(글이 길다는 피드백). 카드 = 번호·종류 칩 → 제목 → 설명(`rich()`: escape 후 `코드`·**굵게**·빈 줄 문단만 허용) → 💡 제안 → 질문 라벨 + 선택지 카드(`.opt`, `:has(input:checked)` 강조, `input.default`에 '추천' 배지, 끝에 '✏️ 직접 입력' 선택지 = 값 `FORM_CUSTOM`) → 아래 텍스트 칸. 칸은 평소 '첨언(선택)' → 답 `{choice, note}`(선택대로 처리하되 참고), '직접 입력'을 고르면 칸 이름이 '직접 입력'으로 바뀌고 답 `{custom}`(비어 있으면 전송 차단). 첨언이 없으면 답은 선택값 그대로(하위 호환). `formatAnswers`가 세 경우를 구분해 문구화. 본문 서식(`rich`/`inline`): 백틱 코드는 먼저 떼어 두고 escape → camelCase·snake_case·`a.b` 체인·`key=value`·`fn()`은 자동 코드 글꼴(버전 번호 `v1.2.3`은 제외) → 줄바꿈 없는 110자 넘는 문단은 문장별 • 목록. 선택지 끝 괄호 부연은 `.osub` 작은 줄(값은 원문). 작성 지시문(`FORM_INSTR`)에도 '한 줄 한 요점·백틱' 가이드. ⚠️ `FORM_INSTR`는 JS 템플릿 문자열(HELPER_SRC) 안이라 백틱은 `\``로 이스케이프. ⌘↩ 전송. 답 수집은 `.card[data-id]`·`[data-t]`·`.fmanual` 구조에 의존하므로 마크업을 바꿀 때 유지할 것. README `form.png`는 `test/screenshots.cjs`가 가상 폼으로 생성.
 - **작업 취소 버튼**: 폼을 보니 그 작업 자체가 불필요했던 경우를 위해 footer에 **[작업 취소]**(빨강). 누르면 `submit-form`에 `{cancel:true}` → main이 답변 대신 `formatCancel(form)`(진행 중 작업 중단·대기 지시)을 **같은 라우팅으로 세션에 전달**. `done/`엔 `{__cancelled:true}`로 기록. footer는 [닫기](창만 닫음)·[작업 취소]·[전송하고 작업 진행] 3버튼.
 - **전송 후 자동 닫기**: `form-done`(code 0) 수신 시 성공 문구를 잠깐 보여준 뒤 **1.2초 후 폼 창 자동 close**(`sessionForm.cancel()`=close-form). 실패 시엔 닫지 않고 입력 보존(초안 localStorage 유지) + [다시 전송].
 - **SendMessage는 이름만 받고 session_id는 못 받는다**(도구 제약). 그래서 정확 배달 = 헤드리스(sid) 또는 "폼에 기록된 이름"으로 relay. 이 둘을 조합.
@@ -196,7 +198,9 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 { "sessionId": "<훅이 주입>", "sessionName": "<Claude가 /list-agents로 확인>", "cwd": "<훅이 주입=작업 폴더>",
   "title": "...", "intro": "...",
   "items": [ { "id": "kebab-id", "kind": "issue|question", "heading": "...", "detail": "...",
-    "proposal": "제안(선택)",
+    "proposal": "제안(선택)", "summary": "결론 한 줄(선택)",
+    "diagram": [ { "label": "현재", "steps": ["A", { "text": "B", "tone": "bad|good|warn|now", "note": "작은 설명" }] } ],
+    "table": { "columns": ["..."], "rows": [["..."]] },
     "input": { "type": "approve|text|textarea|select|radio|checkbox",
                "label": "...", "options": ["..."], "placeholder": "...", "default": "..." } } ] }
 ```
@@ -217,32 +221,32 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 
 ## 패키징 (.app)
 
-사용자는 `/Applications/Claude Session Pets.app`으로 실행한다 (독에 등록). **코드 수정 후 반드시 재패키징**:
+사용자는 `/Applications/Hoo.app`으로 실행한다(2026-09 표시 이름을 Claude Session Pets → **Hoo**로 변경. 사용자 요청으로 식별자도 변경: 번들 식별자 `com.meamde.hoo`(`build-app.sh`가 `--app-bundle-id`로 고정 — 패키저 기본값은 표시 이름에서 만들어짐), 패키지 이름 `hoo` → userData가 `~/Library/Application Support/hoo`로 바뀌어 `main.js` 맨 위 `migrateUserData()`가 첫 실행 때 옛 `claude-session-pets` 폴더를 캐시만 빼고 복사. 식별자가 바뀌어 손쉬운 사용 권한은 한 번 다시 허용 필요. **훅·상태·폼 수신함 경로(`~/.claude/session-pets-*`, `~/Library/claude-session-pets-forms`, `.session-pets/`)는 유지** — 실행 중인 세션들이 이 경로로 상태를 쓰고 폼을 주고받아서. `build-app.sh`가 옛 이름 앱을 끄고 휴지통으로) (독에 등록). **코드 수정 후 반드시 재패키징**:
 
 **빠른 방법: `./build-app.sh`** — 아래 전 과정(빌드→아이콘 교체→ad-hoc 재서명→구버전 휴지통 이동→설치→실행)을
 자동화한 스크립트. 옵션: `--no-open`(설치까지만), `--build`(dist/에 빌드만). 아래 수동 절차는 스크립트가 하는 일의 원본이다:
 
 ```bash
-npx electron-packager . "Claude Session Pets" --platform=darwin --arch=arm64 --out=dist --overwrite \
+npx electron-packager . "Hoo" --platform=darwin --arch=arm64 --out=dist --overwrite \
   --ignore="^/dist" --ignore="^/build" --ignore="^/start.sh"
 # electron-packager --icon이 적용 안 되는 버그가 있어 직접 교체:
-cp build/icon.icns "dist/Claude Session Pets-darwin-arm64/Claude Session Pets.app/Contents/Resources/electron.icns"
+cp build/icon.icns "dist/Hoo-darwin-arm64/Hoo.app/Contents/Resources/electron.icns"
 # ★ ad-hoc 재서명 (필수) — icns 교체 등으로 번들 seal이 깨지면 다른 맥에서 "손상됨"으로 실행 불가.
 #   packager 기본 서명은 linker-signed(Sealed Resources=none)라 깨진 상태 → 아래로 제대로 서명.
-codesign --remove-signature "dist/Claude Session Pets-darwin-arm64/Claude Session Pets.app" 2>/dev/null
-codesign --force --deep --sign - "dist/Claude Session Pets-darwin-arm64/Claude Session Pets.app"
-codesign --verify --deep --strict "dist/Claude Session Pets-darwin-arm64/Claude Session Pets.app"  # 통과해야 함
-osascript -e 'quit app "Claude Session Pets"'
-mv "/Applications/Claude Session Pets.app" ~/.Trash/"Claude Session Pets-old-$(date +%s).app"
-cp -R "dist/Claude Session Pets-darwin-arm64/Claude Session Pets.app" /Applications/
-open "/Applications/Claude Session Pets.app"
+codesign --remove-signature "dist/Hoo-darwin-arm64/Hoo.app" 2>/dev/null
+codesign --force --deep --sign - "dist/Hoo-darwin-arm64/Hoo.app"
+codesign --verify --deep --strict "dist/Hoo-darwin-arm64/Hoo.app"  # 통과해야 함
+osascript -e 'quit app "Hoo"'
+mv "/Applications/Hoo.app" ~/.Trash/"Hoo-old-$(date +%s).app"
+cp -R "dist/Hoo-darwin-arm64/Hoo.app" /Applications/
+open "/Applications/Hoo.app"
 ```
 
 ### 다른 맥으로 배포 (서명 없이 Gatekeeper 우회)
 - 앱은 개발자 인증서로 정식 서명/공증되지 않았다. ad-hoc 서명만으론 전송 시 **quarantine**이 붙어 Gatekeeper가 막는다.
-- 전송용 압축은 **서명 보존을 위해 `ditto`** 로: `ditto -c -k --keepParent "<app>" ~/Desktop/"Claude Session Pets.zip"`
+- 전송용 압축은 **서명 보존을 위해 `ditto`** 로: `ditto -c -k --keepParent "<app>" ~/Desktop/"Hoo.zip"`
 - **받는 맥에서**: 압축 풀어 `/Applications`에 넣은 뒤 격리 속성 제거 → 실행:
-  `xattr -dr com.apple.quarantine "/Applications/Claude Session Pets.app"` (그 후 우클릭 → 열기).
+  `xattr -dr com.apple.quarantine "/Applications/Hoo.app"` (그 후 우클릭 → 열기).
   · 서명이 깨진 채 전송하면 "**손상되어 열 수 없습니다**"(휴지통 이동 요구)로 뜬다 → 반드시 위 ad-hoc 서명 후 전송.
   · 서명이 정상이면 최악의 경우 "확인되지 않은 개발자" 정도라 우클릭 열기로 통과.
 
@@ -298,6 +302,8 @@ open "/Applications/Claude Session Pets.app"
 14. **IntelliJ 정확한 창 raise·권한·spare 펫 + v1.2.3 (2026-09)** — ① ad-hoc 서명(cdhash DR) 때문에 재빌드마다 손쉬운 사용 권한이 풀려 창 raise가 조용히 폴백 → `isTrustedAccessibilityClient` 선확인·1분 간격 재요청·설정 화면 열기, **`build-app.sh`가 바깥 번들 DR을 번들 식별자로 고정**(내부는 deep ad-hoc). ② 창 제목 검색 cwd → 상위 폴더명 재시도. ③ Claude Code 데몬 도우미(`daemon`/`bg-pty-host`/`bg-spare`, cwd `/tmp/cc-daemon-…/spare`)를 세션으로 오인한 "spare" 펫 → `isInternalClaudeHelper` 제외. 릴리스는 사용자 요청 시에만(메모리 규칙).
 
 15. **펫별 독립 창 구조 전환 + v1.3.0 (2026-09)** — 스크린샷 창 선택 문제의 근본 해결(위 "창 구조" 절). `lib/petwins.js`(관리자) + `pet-window`/`main-pet`/`panel`/`halo`/`dim`/`menu` 페이지, `styles/pets.css`·`panel.css` 분리, `process-per-site`로 메모리 1.9GB→420MB, 세션 등록 파일 기반 탐지(파킹된 bg 세션·`versions/<ver>` 바이너리), 테스트/스크린샷 생성기 새 구조로 재작성. 실측 함정: 렌더러 전역 `pet` 이름 충돌, `closed` 이후 `webContents` 접근("Object has been destroyed" — wcId를 미리 캡처), 하니스 스텁 app엔 `commandLine` 없음.
+
+16. **이름 변경 Claude Session Pets → Hoo + Hoo 1.0.0 (2026-09)** — 표시 이름·번들 식별자(`com.meamde.hoo`)·패키지 이름(`hoo`) 변경, userData 자동 이전, 버전을 1.0.0으로 새로 시작. 같은 릴리스에 폼 가독성(문서형 밝은 테마·2단·요약/흐름도/표·직접 입력/첨언), 말풍선 3줄 제한, 빌드 보강(점 파일 제외·유출 검사·옛 앱 종료 대기) 포함. 공개 릴리스 zip 유출 사고로 옛 릴리스 v1.0.0~v1.2.3 삭제.
 
 ## 테스트 방법
 

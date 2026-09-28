@@ -1,4 +1,4 @@
-/* Claude Session Pets — 패널 창 CSS (pet.html에서 분리) */
+/* Hoo — 패널 창 CSS (pet.html에서 분리) */
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   [hidden] { display: none !important; }  /* hidden 속성이 .ssprite{display:block} 등에 밀리지 않게 */

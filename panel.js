@@ -1,4 +1,4 @@
-/* Claude Session Pets — 패널 창 렌더러 (잡담·명령·목록·사용량·설정). pet.js의 패널 부분 이식.
+/* Hoo — 패널 창 렌더러 (잡담·명령·목록·사용량·설정). pet.js의 패널 부분 이식.
  * 펫 상태 판정은 메인(lib/petwins.js)이 하므로 목록 탭은 메인이 실어주는 mode를 그대로 표시한다.
  * 메인펫 말풍선·몸짓은 panelEvent로 메인에 부탁하고, 설정 변경은 localStorage(창 간 공유) + settingsChanged 브로드캐스트. */
 const $ = (s) => document.querySelector(s);

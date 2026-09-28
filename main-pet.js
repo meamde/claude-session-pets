@@ -1,10 +1,10 @@
-/* Claude Session Pets — 메인펫(어미 부엉이) 창 렌더러. pet.js의 메인펫 부분(상태머신·드래그·말풍선·HP바·이미지) 이식.
+/* Hoo — 메인펫(어미 부엉이) 창 렌더러. pet.js의 메인펫 부분(상태머신·드래그·말풍선·HP바·이미지) 이식.
  * 창 크기는 펫 크기에 따라 메인에 요청(W=360, H=펫높이+130: 위쪽은 HP바·말풍선 자리). 클릭 → 패널 창 토글(메인). */
 const $ = (s) => document.querySelector(s);
 const petEl = $('#pet'), spriteEl = $('#sprite'), dotEl = $('#dot-sprite'), bubbleEl = $('#bubble'), zzzEl = $('#zzz');
 let mainDot = null;
 let wa = { x: 0, y: 0, width: 1440, height: 900 };
-const WIN_W = 360, TOP_PAD = 130;
+const WIN_W = 360, TOP_PAD = 150; // 위쪽 여유: HP바 + 말풍선 최대 3줄(15px)
 const S = { size: Number(localStorage.getItem('petSize')) || 128, flip: localStorage.getItem('petFlip') === '1', bgRemove: localStorage.getItem('bgRemove') !== '0',
   ax: 100, ay: 0, vy: 0, dir: 1, state: 'idle', targetX: null, stateUntil: 0, working: false, procBusy: false, panelOpen: false };
 const WALK_SPEED = 1.6, GRAVITY = 1.1;
@@ -81,7 +81,7 @@ petEl.addEventListener('drop', (e) => {
 // ── 말풍선 ──
 let bubbleTimer = null;
 function say(text, ms = 2500) {
-  bubbleEl.textContent = text; bubbleEl.style.setProperty('--shift', '0px'); bubbleEl.classList.remove('show'); void bubbleEl.offsetWidth; bubbleEl.classList.add('show');
+  bubbleEl.textContent = ''; { const t = document.createElement('span'); t.className = 'btext'; t.textContent = text; bubbleEl.appendChild(t); } /* 3줄 제한(.btext) */ bubbleEl.style.setProperty('--shift', '0px'); bubbleEl.classList.remove('show'); void bubbleEl.offsetWidth; bubbleEl.classList.add('show');
   const r = bubbleEl.getBoundingClientRect(); let shift = 0;
   if (r.left < 4) shift = 4 - r.left; else if (r.right > WIN_W - 4) shift = WIN_W - 4 - r.right;
   if (shift) bubbleEl.style.setProperty('--shift', shift + 'px');

@@ -80,6 +80,13 @@ app.whenReady().then(async () => {
     await mp.js(`(() => { const s = document.createElement('style'); s.textContent = '#sprite-wrap, .msprite { animation: none !important; } #bubble { display:none !important; }'; document.head.appendChild(s); })()`);
     const mimg2 = await mp.shot(); const mpf = path.join(TMP, 'main.png'); fs.writeFileSync(mpf, mimg2.toPNG()); mp.win.destroy();
     magick([mpf, '-trim', '+repage', '-bordercolor', BG, '-border', '30', path.join(OUT, 'mainpet-hp.png')]); console.log('📸 mainpet-hp.png');
+    // 6) 세션 입력 폼 — main.js의 renderFormHtml로 가상 폼을 렌더(실제 폼 창과 같은 HTML)
+    const { harness } = require('./main-harness.cjs');
+    const demoForm = {"title": "재검수 결과 — 기존 결함 2건 처리 결정", "intro": "이번 변경분의 문제 1건은 수정했습니다. 남은 기존 결함 2건의 처리 방향을 정해 주세요.", "items": [{"id": "finalize", "kind": "issue", "heading": "비소모성 상품이 READY에서 확정되지 않음", "summary": "비소모성 상품은 결제가 끝나도 `READY`에 멈춰 지급되지 않습니다.", "diagram": [{"label": "현재", "steps": ["결제 완료", {"text": "consume 호출 안 함", "tone": "bad", "note": "consumable=false"}, {"text": "READY에 멈춤", "tone": "bad"}]}, {"label": "수정 후", "steps": ["결제 완료", "consumeTransaction", {"text": "CONFIRM", "tone": "good", "note": "지급 완료"}]}], "detail": "`handleServerConsume`이 소모성 상품만 consume을 호출합니다.\n이번 변경 이전부터 있던 문제입니다.", "table": {"columns": ["마켓", "비소모성 처리", "영향"], "rows": [["Store A", "consume 생략", "미지급"], ["Store B", "자동 확정", "없음"]]}, "proposal": "상품 타입과 무관하게 `consumeTransaction`을 호출합니다.\n테스트 1건을 추가합니다.", "input": {"type": "radio", "label": "처리", "options": ["지금 같이 수정 (타입 무관 확정)", "이번 범위에서 제외 (별도 티켓)"], "default": "지금 같이 수정 (타입 무관 확정)"}}, {"id": "guard", "kind": "issue", "heading": "만료된 주문으로 트랜잭션이 반복 생성될 가능성", "summary": "만료 주문이 계속 활성으로 오면 fetch마다 새 트랜잭션이 생깁니다.", "diagram": ["fetch", "만료 주문 수신", {"text": "트랜잭션 생성", "tone": "warn"}, {"text": "다음 fetch에서 반복", "tone": "bad"}], "proposal": "만료 시각이 지난 주문은 건너뜁니다(INFO 로그).", "input": {"type": "radio", "label": "처리", "options": ["지금 같이 수정 (만료 주문 건너뛰기)", "이번 범위에서 제외, 기록만"]}}]};
+    const formHtml = path.join(TMP, 'form.html'); fs.writeFileSync(formHtml, harness().context.renderFormHtml(demoForm, { id: 'demo' }));
+    const fw = new BrowserWindow({ width: 1240, height: 1000, show: false, webPreferences: { preload: path.join(__dirname, 'ui-preload.cjs'), contextIsolation: true } });
+    await fw.loadFile(formHtml); await sleep(500);
+    fs.writeFileSync(path.join(OUT, 'form.png'), (await fw.webContents.capturePage()).toPNG()); fw.destroy(); console.log('📸 form.png');
     app.exit(0);
   } catch (e) { console.error('SHOT_FAIL', e.stack || e.message); app.exit(1); }
 });

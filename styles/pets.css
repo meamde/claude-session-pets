@@ -1,4 +1,4 @@
-/* Claude Session Pets — 펫 창 공용 CSS (pet.html에서 분리). 메인펫·세션펫·말풍선·HP바·몸짓 애니메이션 */
+/* Hoo — 펫 창 공용 CSS (pet.html에서 분리). 메인펫·세션펫·말풍선·HP바·몸짓 애니메이션 */
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   [hidden] { display: none !important; }  /* hidden 속성이 .ssprite{display:block} 등에 밀리지 않게 */
@@ -246,6 +246,9 @@
     display: none; pointer-events: none;
   }
   .spet .sbubble.show { display: block; animation: spop .3s cubic-bezier(.34,1.56,.64,1); }
+  .spet .sbtext { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; } /* 창 위쪽 여유에 맞춰 최대 3줄 */
+  .spet .sbubble.big .sbtext { -webkit-line-clamp: 2; }
+  #bubble .btext { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; } /* 메인펫: 3줄 */
   .spet .sbubble::after {
     content: ''; position: absolute; top: 100%; left: 50%;
     margin-left: -6px; border: 6px solid transparent; border-top-color: #d97757;

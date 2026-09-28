@@ -10,8 +10,20 @@ const codex = new CodexProvider();
 
 let win = null;
 let tray = null;
-// 펫마다 창(=렌더러)이라 세션이 많으면 프로세스가 수십 개가 된다 → 같은 사이트(file://)의 창들을 한 렌더러 프로세스에 모아 메모리를 줄인다.
-// (실측: 창 18개 기준 개별 프로세스 ~1.9GB RSS → 공유 시 크게 감소). 단점: 렌더러 하나가 죽으면 펫 창이 모두 함께 죽는다.
+// 이름 변경(Claude Session Pets → Hoo, 2026-09) 때 패키지 이름도 바뀌어 userData 폴더가 claude-session-pets → hoo로 옮겨졌다.
+// 새 폴더가 아직 없으면 옛 폴더(펫 이미지·설정·localStorage)를 캐시만 빼고 복사해 그대로 이어 쓴다. (테스트 하니스 스텁 app엔 appData가 없어 try로 감쌈)
+(function migrateUserData() {
+  try {
+    const neu = app.getPath('userData'), old = path.join(app.getPath('appData'), 'claude-session-pets');
+    // ⚠️ Electron이 앱 코드보다 먼저 새 userData 폴더를 만들어 두므로 '폴더 존재'가 아니라 표시 파일로 판단한다(실측)
+    const mark = path.join(neu, '.migrated-from-claude-session-pets');
+    if (neu === old || fs.existsSync(mark) || !fs.existsSync(old)) return;
+    const SKIP = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'blob_storage', 'Shared Dictionary']);
+    fs.mkdirSync(neu, { recursive: true });
+    for (const n of fs.readdirSync(old)) if (!SKIP.has(n) && !n.startsWith('Singleton')) fs.cpSync(path.join(old, n), path.join(neu, n), { recursive: true, force: true });
+    fs.writeFileSync(mark, new Date().toISOString());
+  } catch (e) { console.error('[hoo] userData migrate', e && e.message); }
+})();
 // ⚠️ process-per-site 스위치 금지: 투명 창이 무작위로 흰 배경이 된다. 렌더러 공유는 lib/petwins.js의 window.open 창 풀로 한다
 const runs = new Map(); // id -> child process (claude -p sessions we spawned)
 
@@ -47,7 +59,7 @@ function createTray() {
   const icon = nativeImage.createFromBuffer(buf, { width: size, height: size });
   icon.setTemplateImage(true);
   tray = new Tray(icon);
-  tray.setToolTip('Claude Session Pets');
+  tray.setToolTip('Hoo');
   refreshTrayMenu();
 }
 
@@ -173,7 +185,7 @@ const HOOK_EVENTS = {
 };
 
 const HELPER_SRC = `#!/usr/bin/env python3
-# Claude Session Pets 상태 훅: 세션별 작업 상태(+현재 작업 내용)를 데스크탑 펫이 읽도록 기록한다.
+# Hoo(데스크탑 펫) 상태 훅: 세션별 작업 상태(+현재 작업 내용)를 데스크탑 펫이 읽도록 기록한다.
 import json, sys, os, time, re
 state = sys.argv[1] if len(sys.argv) > 1 else ""
 home = os.path.expanduser("~")
@@ -191,7 +203,9 @@ FORM_INSTR = '''
 - sessionId: 반드시 정확히 "<SESSION_ID>" 로 넣어라(이 폼이 어느 세션 것인지 표시 — 다른 세션 펫이 가로채지 않게).
 - cwd: 반드시 정확히 "<CWD>" 로 넣어라(답변을 이어갈 작업 폴더).
 - sessionName: 답을 이 세션 터미널로 정확히 돌려받기 위한 것. 폼을 만들기 전에 ListAgents(또는 /list-agents 첫 줄 "This session: <이름>")로 '네 세션 이름'을 확인해 그 이름을 넣어라. 확인이 안 되면 이 필드는 생략해도 된다(앱이 sessionId로 폴백).
-approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다. 모든 선택형 항목에는 앱이 '직접 입력' 칸을 자동으로 붙이니 '기타/직접입력' 같은 선택지는 넣지 마라.'''
+approve는 승인/거절/수정요청 라디오로 렌더된다. options는 select/radio/checkbox에만 쓴다. 하나의 폼에 여러 항목을 담아도 된다. 모든 선택형 항목에는 앱이 '직접 입력' 선택지와 '첨언' 칸을 자동으로 붙이니 '기타/직접입력' 같은 선택지는 넣지 마라. 응답의 '첨언'은 고른 처리를 따르되 참고하라는 뜻이다.
+가독성: heading은 한 줄로 짧게. detail·proposal은 한 줄에 한 요점만 쓰고 요점마다 줄바꿈으로 나눠라(긴 한 문단 금지). 코드·파일·함수·설정 이름은 \`백틱\`으로 감싸라. 선택지는 짧은 본문 뒤 괄호에 부연을 붙이면 부연이 아래 작은 글씨로 표시된다.
+요약·그림(선택 필드, 적극 사용): 항목마다 "summary"(결론 한 줄)를 넣고 detail은 3~5줄로 줄여라. 흐름·상태 전이·전후 비교는 글 대신 "diagram": [{"label": "현재", "steps": ["READY", {"text": "consume 안 함", "tone": "bad"}, "멈춤"]}, {"label": "수정 후", "steps": ["READY", "consume", {"text": "CONFIRM", "tone": "good"}]}] 로 그려라(tone: bad|good|warn|now, 단계에 "note"로 작은 설명 가능). 여러 대상 비교는 "table": {"columns": [...], "rows": [[...], ...]} 로.'''
 d = os.path.join(home, ".claude", "session-pets-status")
 try:
     os.makedirs(d, exist_ok=True)
@@ -512,7 +526,7 @@ async function promptInstallHooks(forced) {
     buttons: ['설치', '나중에'],
     defaultId: 0,
     cancelId: 1,
-    title: 'Claude Session Pets',
+    title: 'Hoo',
     message: '세션 작업 상태를 가장 정확히 감지하려면 상태 훅 설치가 필요해요',
     detail:
       'Claude Code 설정(~/.claude/settings.json)에 상태 기록 훅을 추가합니다.\n' +
@@ -707,7 +721,7 @@ async function computeProcs() {
     // 제외/판정은 실행 파일 경로(first token)로만 한다. command 전체로 검사하면
     // `claude -p "Electron 버그 고쳐줘"`처럼 프롬프트에 든 단어 때문에 오탐/미탐이 난다.
     // Claude.app(데스크탑)과 이 앱(Electron)은 제외.
-    if (/Claude\.app|Claude Helper|claude-session-pets|Electron/.test(first)) continue;
+    if (/Claude\.app|Claude Helper|claude-session-pets|Hoo\.app|Electron/.test(first)) continue;
     // 실행 파일 basename이 정확히 'claude'이거나, node로 claude 스크립트를 실행 중인 경우.
     // 경계(\b/끝)를 둬서 claude-monitor, claude-squad 같은 무관한 도구를 오탐하지 않는다.
     const isClaude = base === 'claude' ||
@@ -1280,92 +1294,209 @@ ipcMain.handle('list-forms', (_e, sessionId, provider) => {
 });
 
 // 폼 JSON → 앱이 일관된 HTML로 렌더 (내용은 앱이 escape → 안전)
+const FORM_CUSTOM = '__custom__'; // 폼 선택지의 '직접 입력' 센티널 값
 function renderFormHtml(form, ctx) {
   const items = Array.isArray(form.items) ? form.items : [];
+  // 본문 텍스트: escape 후 가벼운 마크업만 허용 (`코드`, **굵게**, 빈 줄=문단). XSS 안전(escape가 먼저)
+  //  · 백틱 없는 식별자(camelCase·snake_case·a.b 체인·key=value·fn())도 코드 글꼴로 자동 표시
+  //  · 줄바꿈 없는 긴 문단은 문장마다 한 줄(• 목록)로 나눠 훑어보기 쉽게
+  const inline = (raw) => {
+    const codes = []; // 백틱 코드는 먼저 떼어 두었다가 복원 (자동 표시·굵게 처리에서 제외)
+    let t = String(raw).replace(/`([^`\n]+)`/g, (_, c) => '\u0000' + (codes.push(c) - 1) + '\u0000');
+    t = escHtml(t).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+    t = t.replace(/(^|[^\w.$&#])((?:[A-Za-z_$][\w$]*)(?:(?:\.|::|#)[A-Za-z_$][\w$]*)*(?:\(\))?(?:=[\w.-]+)?)(?![\w$])/g, (m, pre, id) => {
+      const code = /[a-z][A-Z]/.test(id) || /[A-Za-z]_[A-Za-z]/.test(id) || /[A-Za-z]\.[A-Za-z]/.test(id) || /=/.test(id) || /\(\)$/.test(id);
+      return code ? pre + '<code>' + id + '</code>' : m;
+    });
+    t = t.replace(/→|-&gt;/g, '<span class="arr">→</span>');
+    return t.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + escHtml(codes[+i]) + '</code>').replace(/\n/g, '<br>');
+  };
+  const SENT = /(?<=[가-힣A-Za-z0-9)\]%][.!?])\s+(?=\S)/; // 문장 끝(마침표 뒤 공백). v1.2.3·e.g. 같은 점은 공백이 없어 안 끊김
+  const rich = (t) => String(t == null ? '' : t).split(/\n\s*\n/).map(para => {
+    para = para.trim(); if (!para) return '';
+    const sents = !para.includes('\n') && para.length > 110 ? para.split(SENT) : [para];
+    return sents.length > 1 ? '<ul class="sents">' + sents.map(x => '<li>' + inline(x) + '</li>').join('') + '</ul>' : '<p>' + inline(para) + '</p>';
+  }).join('');
+  // 선택지 "본문 (부연)" → 본문 + 아래 작은 부연 줄 (값은 원문 그대로)
+  // 흐름도: diagram = [{ label, steps: [단계 | {text, tone:'bad'|'good'|'warn'|'now', note}] }] 또는 단계 배열 하나
+  const TONES = new Set(['bad', 'good', 'warn', 'now']);
+  const diagramHtml = (d) => {
+    if (!d) return '';
+    const rows = Array.isArray(d) && d.length && (typeof d[0] === 'string' || (d[0] && d[0].text != null)) ? [{ steps: d }] : (Array.isArray(d) ? d : [d]);
+    const row = (r) => {
+      const steps = Array.isArray(r && r.steps) ? r.steps : [];
+      if (!steps.length) return '';
+      const li = steps.map(st => { const o = typeof st === 'string' ? { text: st } : (st || {}); const tone = TONES.has(o.tone) ? ' t-' + o.tone : '';
+        return `<li class="step${tone}"><span>${inline(o.text == null ? '' : o.text)}</span>${o.note ? `<small>${inline(o.note)}</small>` : ''}</li>`; }).join('');
+      return `<div class="flow">${r.label ? `<div class="flowlabel">${inline(r.label)}</div>` : ''}<ol class="steps">${li}</ol></div>`;
+    };
+    const body = rows.map(row).join(''); return body ? `<div class="diagram">${body}</div>` : '';
+  };
+  // 비교표: table = { columns: [...], rows: [[...], ...] }
+  const tableHtml = (tb) => {
+    if (!tb || !Array.isArray(tb.rows) || !tb.rows.length) return '';
+    const cols = Array.isArray(tb.columns) ? tb.columns : [];
+    return `<div class="tblwrap"><table class="tbl">${cols.length ? '<thead><tr>' + cols.map(c => `<th>${inline(c)}</th>`).join('') + '</tr></thead>' : ''}<tbody>` +
+      tb.rows.map(r => '<tr>' + (Array.isArray(r) ? r : [r]).map(c => `<td>${inline(c == null ? '' : c)}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>';
+  };
+  const optLabel = (o) => { const m = String(o).match(/^(.+?)\s*[(（]([^()（）]+)[)）]\s*$/); return m ? escHtml(m[1]) + '<span class="osub">' + inline(m[2]) + '</span>' : escHtml(o); };
   const field = (it) => {
     const inp = it.input || {};
     const id = 'f_' + escHtml(it.id);
     const type = inp.type || 'textarea';
     const opts = Array.isArray(inp.options) ? inp.options : [];
+    const rec = (o) => (inp.default != null && o === inp.default) ? '<em class="rec">추천</em>' : '';
+    // 선택지 끝에 '직접 입력'을 붙인다(폼에 이미 직접 입력/기타가 있으면 생략). 값은 센티널 CUSTOM
+    const hasOwnCustom = (list) => list.some(o => /직접\s*입력|^기타/.test(String(o)));
     if (type === 'text')
       return `<input class="fin" id="${id}" data-t="text" type="text" placeholder="${escHtml(inp.placeholder || '')}" value="${escHtml(inp.default || '')}">`;
     if (type === 'textarea')
-      return `<textarea class="fin" id="${id}" data-t="textarea" rows="3" placeholder="${escHtml(inp.placeholder || '')}">${escHtml(inp.default || '')}</textarea>`;
+      return `<textarea class="fin" id="${id}" data-t="textarea" rows="4" placeholder="${escHtml(inp.placeholder || '')}">${escHtml(inp.default || '')}</textarea>`;
     if (type === 'select')
       return `<select class="fin" id="${id}" data-t="select">` +
-        opts.map(o => `<option${o === inp.default ? ' selected' : ''}>${escHtml(o)}</option>`).join('') + `</select>`;
+        opts.map(o => `<option${o === inp.default ? ' selected' : ''}>${escHtml(o)}</option>`).join('') +
+        (hasOwnCustom(opts) ? '' : `<option value="${FORM_CUSTOM}">✏️ 직접 입력</option>`) + `</select>`;
     if (type === 'radio' || type === 'approve') {
       const choices = type === 'approve' ? ['승인', '거절', '수정 요청'] : opts;
-      return `<div class="frad" id="${id}" data-t="radio">` + choices.map((o, i) =>
-        `<label class="rad"><input type="radio" name="${id}" value="${escHtml(o)}"${(o === inp.default || (i === 0 && inp.default == null)) ? ' checked' : ''}> ${escHtml(o)}</label>`).join('') + `</div>`;
+      return `<div class="opts" id="${id}" data-t="radio">` + choices.map((o, i) =>
+        `<label class="opt"><input type="radio" name="${id}" value="${escHtml(o)}"${(o === inp.default || (i === 0 && inp.default == null)) ? ' checked' : ''}><span class="otext">${optLabel(o)}</span>${rec(o)}</label>`).join('') +
+        (hasOwnCustom(choices) ? '' : `<label class="opt opt-custom"><input type="radio" name="${id}" value="${FORM_CUSTOM}"><span class="otext">✏️ 직접 입력</span></label>`) + `</div>`;
     }
     if (type === 'checkbox')
-      return `<div class="fchk" id="${id}" data-t="checkbox">` + opts.map(o =>
-        `<label class="chk"><input type="checkbox" value="${escHtml(o)}"> ${escHtml(o)}</label>`).join('') + `</div>`;
-    return `<textarea class="fin" id="${id}" data-t="textarea" rows="3"></textarea>`;
+      return `<div class="opts" id="${id}" data-t="checkbox">` + opts.map(o =>
+        `<label class="opt chk"><input type="checkbox" value="${escHtml(o)}"><span class="otext">${optLabel(o)}</span>${rec(o)}</label>`).join('') +
+        (hasOwnCustom(opts) ? '' : `<label class="opt chk opt-custom"><input type="checkbox" value="${FORM_CUSTOM}"><span class="otext">✏️ 직접 입력</span></label>`) + `</div>`;
+    return `<textarea class="fin" id="${id}" data-t="textarea" rows="4"></textarea>`;
   };
-  // 선택형(승인/선택/라디오/체크)에는 "직접 입력" 칸을 항상 붙인다. 제안이 다 마음에 안 들 때 override.
+  // 선택형(승인/선택/라디오/체크) 아래 텍스트 칸: 평소엔 '첨언'(선택한 처리를 따르되 참고), '직접 입력' 선택 시 그 자체가 답
   const CHOICE = new Set(['approve', 'select', 'radio', 'checkbox']);
   const manualField = (it) => CHOICE.has((it.input || {}).type)
-    ? `<input class="fmanual" data-manual type="text" placeholder="↳ 위 선택지가 다 아니면 여기에 직접 입력 (입력하면 이게 우선)">`
+    ? `<div class="manual"><label><span class="mlabel">첨언 (선택)</span> <small class="mhint">선택한 처리를 따르되, 여기 적은 내용을 참고해 진행합니다</small></label><textarea class="fmanual" data-manual rows="2" placeholder="덧붙일 요청이나 주의사항이 있으면 적어 주세요"></textarea></div>`
     : '';
-  const cards = items.map(it => `
+  const total = items.length;
+  const cards = items.map((it, n) => `
     <section class="card" data-id="${escHtml(it.id)}">
-      <div class="kind ${it.kind === 'issue' ? 'k-issue' : 'k-q'}">${it.kind === 'issue' ? '수정 제안' : '질문'}</div>
+      <div class="chead"><span class="num">${n + 1}${total > 1 ? ' / ' + total : ''}</span><span class="kind ${it.kind === 'issue' ? 'k-issue' : 'k-q'}">${it.kind === 'issue' ? '확인 필요' : '질문'}</span></div>
       <h2>${escHtml(it.heading || '')}</h2>
-      ${it.detail ? `<p class="detail">${escHtml(it.detail)}</p>` : ''}
-      ${it.proposal ? `<div class="proposal"><span>제안</span>${escHtml(it.proposal)}</div>` : ''}
-      ${it.input && it.input.label ? `<label class="flabel">${escHtml(it.input.label)}</label>` : ''}
-      ${field(it)}${manualField(it)}
+      ${it.summary ? `<p class="summary">${inline(it.summary)}</p>` : ''}
+      <div class="cbody">
+        <div class="cmain">
+          ${diagramHtml(it.diagram)}
+          ${it.detail ? `<div class="detail">${rich(it.detail)}</div>` : ''}
+          ${tableHtml(it.table)}
+          ${it.proposal ? `<div class="proposal"><div class="ptitle">💡 제안</div>${rich(it.proposal)}</div>` : ''}
+        </div>
+        <div class="ask">
+          ${it.input && it.input.label ? `<div class="flabel">${escHtml(it.input.label)}</div>` : ''}
+          ${field(it)}${manualField(it)}
+        </div>
+      </div>
     </section>`).join('');
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>${escHtml(form.title || '세션 입력')}</title>
 <style>
-  :root{--bg:#1c1b1a;--panel:#262019;--panel2:#33291f;--ink:#f4efe9;--muted:#b6a99c;--accent:#d97757;--line:#4a3d31;}
+  /* 문서형 밝은 테마 + 넓은 창에서 2단(왼쪽 설명·오른쪽 선택지 고정) — 사용자 선택(2026-09) */
+  :root{color-scheme:light;--bg:#f7f5f2;--panel:#ffffff;--panel2:#faf7f3;--ink:#1c1a18;--body:#3a3531;--muted:#756c63;--accent:#c4552f;--accent-bg:#fdf1ec;--line:#e9e3dc;--line2:#d8cfc5;--ok:#2f8a3e;--bad:#c93b2b;--warn:#b7791f;--head:96px}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;line-height:1.55;font-size:14px}
-  header{padding:18px 22px 12px;position:sticky;top:0;background:linear-gradient(180deg,#1c1b1a,rgba(28,27,26,.92));border-bottom:1px solid var(--line);backdrop-filter:blur(4px)}
-  header h1{margin:0 0 4px;font-size:18px}
-  header p{margin:0;color:var(--muted);font-size:12.5px}
-  main{padding:16px 22px 120px;display:flex;flex-direction:column;gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-  .kind{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:2px 9px;margin-bottom:8px}
-  .k-issue{background:rgba(217,119,87,.22);color:var(--accent)}
-  .k-q{background:rgba(120,160,220,.22);color:#8ab4e8}
-  .card h2{margin:0 0 6px;font-size:15px}
-  .detail{margin:0 0 8px;color:#ddd2c7;white-space:pre-wrap}
-  .proposal{background:var(--panel2);border-left:3px solid var(--accent);border-radius:6px;padding:8px 10px;margin:0 0 10px;color:#ecdfd3;white-space:pre-wrap}
-  .proposal span{display:block;font-size:11px;font-weight:700;color:var(--accent);margin-bottom:3px}
-  .flabel{display:block;font-size:12px;color:var(--muted);margin:4px 0 5px}
-  .fin{width:100%;background:#1a1512;border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:8px 10px;font:inherit;font-size:13px}
-  .fin:focus{outline:none;border-color:var(--accent)}
-  textarea.fin{resize:vertical}
-  .fmanual{width:100%;margin-top:8px;background:#1a1512;border:1px dashed var(--line);border-radius:8px;color:var(--ink);padding:7px 10px;font:inherit;font-size:12.5px}
-  .fmanual:focus{outline:none;border-color:var(--accent);border-style:solid}
-  .fmanual::placeholder{color:#8a7d70}
-  .frad,.fchk{display:flex;flex-direction:column;gap:6px}
-  .rad,.chk{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
-  input[type=radio],input[type=checkbox]{accent-color:var(--accent)}
-  footer{position:fixed;bottom:0;left:0;right:0;padding:12px 22px;background:linear-gradient(0deg,#1c1b1a,rgba(28,27,26,.9));border-top:1px solid var(--line);display:flex;gap:10px;align-items:center}
-  button{font:inherit;font-weight:700;border-radius:9px;padding:10px 18px;cursor:pointer;border:1px solid var(--line)}
-  #send{background:var(--accent);color:#1c1b1a;border-color:var(--accent);flex:1}
+  html{scroll-padding-top:calc(var(--head) + 16px)}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif;line-height:1.72;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 32px}
+  header{position:sticky;top:0;z-index:2;background:rgba(247,245,242,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  header .wrap{padding-top:20px;padding-bottom:14px}
+  header h1{margin:0 0 4px;font-size:21px;line-height:1.4;letter-spacing:-.01em}
+  header p{margin:0;color:var(--muted);font-size:14px}
+  main.wrap{padding-top:24px;padding-bottom:calc(var(--foot,90px) + 40px);display:flex;flex-direction:column;gap:22px} /* ⚠️ .wrap의 padding 단축 속성이 덮지 않게 main.wrap으로 */
+  .card{background:var(--panel);border-radius:14px;padding:24px 28px 26px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 0 0 1px var(--line)}
+  .chead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .num{font-size:12px;font-weight:700;color:var(--muted);background:#f1ede8;border-radius:6px;padding:2px 8px;font-variant-numeric:tabular-nums}
+  .kind{font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px}
+  .k-issue{background:#fbe6dd;color:#a8431e}
+  .k-q{background:#e3edfa;color:#2b5d9f}
+  .card h2{margin:0 0 6px;font-size:19px;line-height:1.45;letter-spacing:-.01em}
+  .summary{margin:0 0 4px;font-size:16.5px;font-weight:600;color:var(--ink);line-height:1.6}
+  .cbody{margin-top:14px}
+  .cmain{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .detail{color:var(--body)}
+  .detail p,.proposal p{margin:0 0 8px}
+  .detail p:last-child,.proposal p:last-child{margin-bottom:0}
+  .sents{margin:0 0 8px;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+  .sents:last-child{margin-bottom:0}
+  .sents li{position:relative;padding-left:16px}
+  .sents li::before{content:'';position:absolute;left:3px;top:.74em;width:5px;height:5px;border-radius:50%;background:#b3a699}
+  .proposal .sents li::before{background:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;background:#f3efea;border-radius:4px;padding:1px 4px;color:#8a3a18;overflow-wrap:anywhere}
+  b{color:#000}
+  .arr{color:var(--accent);font-weight:700;padding:0 1px}
+  .proposal{background:#fdf6f2;border-left:4px solid var(--accent);border-radius:8px;padding:12px 16px;color:var(--body)}
+  .ptitle{font-size:13px;font-weight:700;color:var(--accent);margin-bottom:4px}
+  /* 흐름도 */
+  .diagram{display:flex;flex-direction:column;gap:10px;background:var(--panel2);border-radius:10px;padding:14px 16px}
+  .flow{display:flex;flex-direction:column;gap:6px}
+  .flowlabel{font-size:12.5px;font-weight:700;color:var(--muted)}
+  .steps{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;align-items:stretch;gap:6px 0}
+  .step{display:flex;flex-direction:column;justify-content:center;background:#fff;border:1.5px solid var(--line2);border-radius:8px;padding:6px 11px;font-size:14px;line-height:1.45;max-width:260px}
+  .step small{font-size:12px;color:var(--muted);margin-top:1px}
+  .step:not(:last-child){margin-right:26px;position:relative}
+  .step:not(:last-child)::after{content:'→';position:absolute;right:-21px;top:50%;transform:translateY(-50%);color:#a3968a;font-weight:700}
+  .t-bad{border-color:#e7a79e;background:#fdf0ee;color:#8f2418}
+  .t-good{border-color:#9fd1a7;background:#eef8f0;color:#1f6b2c}
+  .t-warn{border-color:#e8c78f;background:#fdf6e7;color:#7a4f0e}
+  .t-now{border-color:var(--accent);box-shadow:0 0 0 2px rgba(196,85,47,.15)}
+  /* 비교표 */
+  .tblwrap{overflow-x:auto}
+  .tbl{border-collapse:collapse;width:100%;font-size:14px}
+  .tbl th,.tbl td{border-bottom:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  .tbl th{font-size:12.5px;color:var(--muted);font-weight:700;background:var(--panel2)}
+  /* 선택 영역 */
+  .ask{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+  .flabel{font-size:15.5px;font-weight:700;color:var(--ink);margin:0 0 10px}
+  .opts{display:flex;flex-direction:column;gap:8px}
+  .opt{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1.5px solid var(--line2);border-radius:10px;background:#fff;cursor:pointer;transition:border-color .12s,background .12s}
+  .opt:hover{border-color:#bfb2a5;background:#fcfaf8}
+  .opt:has(input:checked){border-color:var(--accent);background:var(--accent-bg)}
+  .opt input{margin:0;width:18px;height:18px;flex:none;accent-color:var(--accent)}
+  .otext{flex:1;font-size:15px;color:var(--ink);line-height:1.5}
+  .osub{display:block;font-size:13px;color:var(--muted);margin-top:2px;line-height:1.5}
+  .opt-custom .otext{color:#9a4a2a}
+  .rec{font-style:normal;font-size:11.5px;font-weight:700;color:#fff;background:var(--ok);border-radius:999px;padding:1px 8px;flex:none}
+  .fin{width:100%;background:#fff;border:1.5px solid var(--line2);border-radius:10px;color:var(--ink);padding:10px 13px;font:inherit;font-size:15px}
+  .fin:focus,.fmanual:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(196,85,47,.15)}
+  textarea.fin{resize:vertical;min-height:96px}
+  select.fin{appearance:auto}
+  .manual{margin-top:14px}
+  .manual label{display:block;font-size:13.5px;font-weight:700;color:var(--muted);margin-bottom:6px}
+  .manual small{font-weight:400;color:#948a80}
+  .manual.is-custom .mlabel{color:var(--accent)}
+  .manual.is-custom .fmanual{border-color:var(--accent);border-style:solid}
+  .fmanual{width:100%;background:#fff;border:1.5px dashed var(--line2);border-radius:10px;color:var(--ink);padding:9px 13px;font:inherit;font-size:14.5px;resize:vertical;min-height:46px}
+  .fmanual.need{border-color:var(--bad)!important;box-shadow:0 0 0 3px rgba(201,59,43,.15)}
+  .fmanual::placeholder,.fin::placeholder{color:#aaa096}
+  /* 넓은 창: 2단 — 왼쪽 설명, 오른쪽 선택지(스크롤해도 따라옴) */
+  @media (min-width: 980px){
+    .cbody{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,1fr);gap:28px;align-items:start}
+    .ask{margin-top:0;padding-top:0;border-top:none;position:sticky;top:calc(var(--head) + 16px)}
+  }
+  footer{position:fixed;bottom:0;left:0;right:0;background:rgba(247,245,242,.96);backdrop-filter:blur(8px);border-top:1px solid var(--line)}
+  footer .wrap{padding-top:14px;padding-bottom:16px;display:flex;gap:10px;align-items:center}
+  button{font:inherit;font-size:15px;font-weight:700;border-radius:10px;padding:11px 18px;cursor:pointer;border:1.5px solid var(--line2);background:#fff;color:var(--ink)}
+  #send{background:var(--accent);color:#fff;border-color:var(--accent);flex:1}
+  #send kbd{font:inherit;font-size:12px;font-weight:600;opacity:.8;margin-left:8px}
   #send:disabled{opacity:.5;cursor:default}
   #cancel{background:transparent;color:var(--muted)}
-  #cancelwork{background:transparent;color:#e0796a;border-color:rgba(217,119,87,.5)}
+  #cancelwork{background:transparent;color:var(--bad);border-color:#ebb7af}
   #cancelwork:disabled{opacity:.5;cursor:default}
-  #progress{display:none;padding:12px 22px 100px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cfc3b6}
+  #progress{display:none;margin:0 auto;max-width:1180px;padding:12px 32px 110px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#4a443e}
   #progress.show{display:block}
-  .done{color:#7bbf6a;font-weight:700}
 </style></head>
 <body>
-  <header><h1>${escHtml(form.title || '세션 입력')}</h1><p>${escHtml(form.intro || '선택/입력 후 전송하면 이 세션이 이어서 작업합니다.')}</p></header>
-  <main id="form">${cards}</main>
+  <header><div class="wrap"><h1>${escHtml(form.title || '세션 입력')}</h1><p>${escHtml(form.intro || '선택/입력 후 전송하면 이 세션이 이어서 작업합니다.')}</p></div></header>
+  <main id="form" class="wrap">${cards}</main>
   <pre id="progress"></pre>
-  <footer>
+  <footer><div class="wrap">
     <button id="cancel">닫기</button>
     <button id="cancelwork">작업 취소</button>
-    <button id="send">전송하고 작업 진행 →</button>
-  </footer>
+    <button id="send">전송하고 작업 진행 →<kbd>⌘↩</kbd></button>
+  </div></footer>
 <script>
   const CTX = ${JSON.stringify(ctx || {}).replace(/</g, '\\u003c')};
   const DKEY = 'sform-draft:' + (CTX.id || 'form');
@@ -1376,16 +1507,44 @@ function renderFormHtml(form, ctx) {
     if (t === 'radio') { const c = el.querySelector('input:checked'); return c ? c.value : null; }
     return el.value;
   }
-  // 최종 답변: '직접 입력'이 있으면 그게 선택지보다 우선
+  const CUSTOM = ${JSON.stringify(FORM_CUSTOM)};
+  const isCustom = (v) => Array.isArray(v) ? v.includes(CUSTOM) : v === CUSTOM;
+  // 최종 답변: 선택형이면 { choice, note } (첨언) 또는 { custom } (직접 입력). 첨언이 없으면 선택값 그대로
   function collect(){
     const ans = {};
     document.querySelectorAll('main .card').forEach(card => {
       const iid = card.dataset.id;
       const man = card.querySelector('.fmanual');
-      const mv = man && man.value.trim();
-      ans[iid] = mv ? man.value.trim() : fieldVal(card);
+      const sel = fieldVal(card);
+      if (!man) { ans[iid] = sel; return; }
+      const txt = man.value.trim();
+      if (isCustom(sel)) {
+        const rest = Array.isArray(sel) ? sel.filter(v => v !== CUSTOM) : null;
+        ans[iid] = rest && rest.length ? { choice: rest, custom: txt } : { custom: txt };
+      } else ans[iid] = txt ? { choice: sel, note: txt } : sel;
     });
     return ans;
+  }
+  // 아래 칸 모드 전환: '직접 입력' 선택 → 이름·안내를 '직접 입력'으로, 아니면 '첨언'
+  function updateManual(card){
+    const box = card.querySelector('.manual'); if (!box) return;
+    const custom = isCustom(fieldVal(card)); const ta = box.querySelector('.fmanual');
+    box.classList.toggle('is-custom', custom);
+    box.querySelector('.mlabel').textContent = custom ? '직접 입력' : '첨언 (선택)';
+    box.querySelector('.mhint').textContent = custom ? '위 선택지 대신 이 내용대로 처리합니다' : '선택한 처리를 따르되, 여기 적은 내용을 참고해 진행합니다';
+    ta.placeholder = custom ? '원하는 처리를 직접 적어 주세요' : '덧붙일 요청이나 주의사항이 있으면 적어 주세요';
+    if (!custom) ta.classList.remove('need');
+  }
+  function updateAll(){ document.querySelectorAll('main .card').forEach(updateManual); }
+  document.addEventListener('change', (e) => { const card = e.target.closest && e.target.closest('.card'); if (!card) return; updateManual(card);
+    if (e.target.value === CUSTOM && e.target.checked !== false) { const ta = card.querySelector('.fmanual'); if (ta) ta.focus(); } });
+  // 직접 입력을 골랐는데 비어 있으면 전송을 막는다
+  function missingCustom(){
+    for (const card of document.querySelectorAll('main .card')) {
+      const ta = card.querySelector('.fmanual');
+      if (ta && isCustom(fieldVal(card)) && !ta.value.trim()) { ta.classList.add('need'); ta.focus(); ta.scrollIntoView({ block: 'center' }); return true; }
+    }
+    return false;
   }
   // 초안 스냅샷: 선택값과 직접입력을 함께 저장/복원 (재열림·실패에도 안 날아감)
   function snapshot(){
@@ -1410,11 +1569,14 @@ function renderFormHtml(form, ctx) {
     });
   }
   try { const d = JSON.parse(localStorage.getItem(DKEY) || 'null'); if (d) restoreSnap(d); } catch (e) {}
+  updateAll();
+  document.addEventListener('input', (e) => { if (e.target.classList && e.target.classList.contains('fmanual')) e.target.classList.remove('need'); });
   document.addEventListener('input', () => { try { localStorage.setItem(DKEY, JSON.stringify(snapshot())); } catch (e) {} });
   const send = document.getElementById('send');
   const prog = document.getElementById('progress');
   send.addEventListener('click', async () => {
     try { localStorage.setItem(DKEY, JSON.stringify(snapshot())); } catch (e) {}
+    if (missingCustom()) return;
     send.disabled = true; send.textContent = '전송 중…';
     prog.classList.add('show'); prog.textContent = '세션을 이어서 실행 중…\\n';
     let r; try { r = await window.sessionForm.submit({ id: CTX.id, answers: collect() }); }
@@ -1424,6 +1586,9 @@ function renderFormHtml(form, ctx) {
       send.disabled = false; send.textContent = '다시 전송';
     }
   });
+  const setFoot = () => { const r = document.documentElement.style; r.setProperty('--foot', document.querySelector('footer').offsetHeight + 'px'); r.setProperty('--head', document.querySelector('header').offsetHeight + 'px'); };
+  setFoot(); window.addEventListener('resize', setFoot);
+  document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !send.disabled) { e.preventDefault(); send.click(); } });
   document.getElementById('cancel').addEventListener('click', () => window.sessionForm.cancel());
   // '작업 취소': 이 작업이 필요 없었을 때, 세션에 취소를 전달해 진행 중이던 작업을 멈추게 한다
   const cw = document.getElementById('cancelwork');
@@ -1461,8 +1626,11 @@ ipcMain.handle('open-form', (_e, { id }) => {
     const htmlPath = formFile(id, '.html');
     fs.writeFileSync(htmlPath, html); // 렌더된 HTML도 공용 폴더에 남김
     if (formWin && !formWin.isDestroyed()) formWin.close();
+    // 기본 창을 넉넉하게(가독성): 폭 1240(2단 배치), 높이는 작업 영역에 맞춰 최대 1000, 화면 가운데. 좁히면 1단으로
+    let fwa = { width: 1400, height: 1000 }; try { fwa = screen.getPrimaryDisplay().workArea; } catch {}
+    const fw = Math.min(1240, fwa.width - 60), fh = Math.min(1000, fwa.height - 40);
     formWin = new BrowserWindow({
-      width: 580, height: 760, title: form.title || '세션 입력', show: true,
+      width: fw, height: fh, minWidth: 560, minHeight: 480, center: true, title: form.title || '세션 입력', show: true, backgroundColor: '#f7f5f2',
       webPreferences: { preload: path.join(__dirname, 'form-preload.js'), contextIsolation: true, nodeIntegration: false },
     });
     formWin.loadFile(htmlPath); // CTX(id)는 renderFormHtml이 HTML에 직접 박음(로드 전에 확정)
@@ -1479,10 +1647,14 @@ function formatAnswers(form, answers) {
   ];
   for (const it of (form.items || [])) {
     const a = answers[it.id];
-    const val = Array.isArray(a) ? (a.length ? a.join(', ') : '(선택 없음)') : (a == null || a === '' ? '(응답 없음)' : a);
+    const show = (v) => Array.isArray(v) ? (v.length ? v.join(', ') : '(선택 없음)') : (v == null || v === '' ? '(응답 없음)' : v);
     lines.push(`■ ${it.heading || it.id}`);
     if (it.proposal) lines.push(`  제안: ${it.proposal}`);
-    lines.push(`  → 사용자 응답: ${val}`);
+    if (a && typeof a === 'object' && !Array.isArray(a)) {
+      if (a.choice != null) lines.push(`  → 사용자 응답: ${show(a.choice)}`);
+      if (a.custom != null) lines.push(a.choice != null ? `  → 직접 입력(추가 항목): ${a.custom || '(비어 있음)'}` : `  → 사용자 응답(직접 입력 — 선택지 대신 이대로 처리): ${a.custom || '(비어 있음)'}`);
+      if (a.note) lines.push(`  → 첨언(위 선택대로 처리하되 참고): ${a.note}`);
+    } else lines.push(`  → 사용자 응답: ${show(a)}`);
     lines.push('');
   }
   return lines.join('\n');

@@ -68,7 +68,8 @@ try:
                        '사용자가 펫에서 폼에 답하면 같은 세션에 답변이 돌아옵니다. '
                        '불필요한 질문을 만들지 말고 명시된 작업은 그대로 진행하세요. '
                        'input.type은 text,textarea,approve,radio,select,checkbox 중 하나입니다. '
-                       '파일 생성 권한이 없으면 원래 질문 도구로 질문하세요. 스키마: ' + json.dumps(schema, ensure_ascii=False))
+                       '파일 생성 권한이 없으면 원래 질문 도구로 질문하세요. '
+                       '가독성: 항목마다 summary(결론 한 줄)를 넣고 detail은 짧게, 흐름·전후 비교는 diagram=[{"label":"현재","steps":["A",{"text":"B","tone":"bad"}]}], 비교는 table={"columns":[],"rows":[[]]}로 쓰세요. 스키마: ' + json.dumps(schema, ensure_ascii=False))
         print(json.dumps({'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': instruction}}))
 except Exception:
     # An observer must not break the user's task.

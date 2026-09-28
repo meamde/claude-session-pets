@@ -1,4 +1,4 @@
-/* Claude Session Pets — 세션펫 창 렌더러 (펫 하나 = 창 하나)
+/* Hoo — 세션펫 창 렌더러 (펫 하나 = 창 하나)
  * 이전엔 화면 전체를 덮는 창 하나에 모든 펫을 그렸는데(pet.js), 그 창이 스크린샷 창 선택·다른 앱 클릭을 막아
  * 펫마다 독립된 작은 투명 창으로 바꿨다(사용자 요청). 이 파일은 옛 SessionPet 클래스의 이식판:
  *  · 위치는 스크린 좌표(작업 영역 wa 기준)로 계산하고, 창 이동은 메인에 요청(petMove) — 창이 펫을 따라다닌다
@@ -175,7 +175,8 @@ class SessionPet {
   }
   landRestore() { const back = this.sticky === 'form' ? 'wait' : this.sticky === 'done' ? 'done' : this.sticky === 'wait' ? 'wait' : this.working ? 'work' : 'idle'; this.enter(back, back === 'idle' ? 1500 : 0); }
   setName(n) { if (n && n !== this.name) { this.name = n; this.nameEl.textContent = n; } }
-  showBubble(text, big = false) { this.bubbleEl.textContent = text; this.bubbleEl.classList.toggle('big', big); this.bubbleEl.classList.remove('show'); void this.bubbleEl.offsetWidth; this.bubbleEl.classList.add('show'); }
+  // 말풍선은 창(280×200) 위쪽 여유 ~78px 안에 들어가야 한다 → 안쪽 span에서 줄 수 제한(.sbtext, 3줄/큰 말풍선 2줄) 후 …
+  showBubble(text, big = false) { this.bubbleEl.textContent = ''; const t = document.createElement('span'); t.className = 'sbtext'; t.textContent = text; this.bubbleEl.appendChild(t); this.bubbleEl.classList.toggle('big', big); this.bubbleEl.classList.remove('show'); void this.bubbleEl.offsetWidth; this.bubbleEl.classList.add('show'); }
   hideBubble() { this.bubbleEl.classList.remove('show'); }
   restoreBubble() {
     if (this.state === 'bye') return;
@@ -197,7 +198,15 @@ class SessionPet {
       }
     } else if (this.pendingForm) { this.pendingForm = null; if (this.sticky === 'form') this.goIdle(); }
   }
-  workBubbleText() { return (this.workTaskKind === 'prompt' ? '>_' : '🏃') + ' ' + (this.workTask || '작업 중…'); }
+  workBubbleText() {
+    let t = this.workTask ? String(this.workTask).replace(/\s+/g, ' ').trim() : '';
+    // 폼 응답이 프롬프트로 들어오면 전문 대신 '📋 폼 응답 반영: 첫 항목 제목'
+    if (this.workTaskKind === 'prompt' && /^아래는 사용자가 입력 폼에 채워 보낸 응답입니다/.test(t)) {
+      const m = t.match(/■\s*([^■→]+?)(?:\s+제안:|\s+→|■|$)/); return '📋 폼 응답 반영' + (m ? ': ' + m[1].trim() : '');
+    }
+    if (this.workTaskKind === 'prompt' && /^사용자가 이 입력 폼을 검토한 뒤 '작업 취소'/.test(t)) return '📋 작업 취소 전달됨';
+    return (this.workTaskKind === 'prompt' ? '>_' : '🏃') + ' ' + (t || '작업 중…');
+  }
   inAir() { return this.state === 'drag' || this.state === 'fall'; }
   setAlert(kind) {
     this.el.classList.add('alerting'); this.el.classList.toggle('alert-done', kind === 'done'); this.el.classList.toggle('alert-wait', kind !== 'done');
