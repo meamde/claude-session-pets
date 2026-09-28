@@ -34,8 +34,15 @@ test('Python hooks: approval, resume, compaction, stop and end',()=>{
  assert.equal(run('UserPromptSubmit',{prompt:'test'}).state,'working');assert.equal(run('PreToolUse',{tool_name:'Bash',tool_input:{command:'npm test'}}).task,'npm test');assert.equal(run('PermissionRequest').state,'waiting');assert.equal(run('PostToolUse').state,'working');assert.equal(run('SessionStart',{source:'compact'}).state,'working');assert.equal(run('Interrupt').state,'idle');assert.equal(run('Stop').task,undefined);assert.equal(run('SessionEnd'),null);
 });
 test('hook install preserves other hooks, is idempotent and rejects broken settings',()=>{
+ // 전체 폼 모드 기본값(~/.claude/session-pets-formmode/.default-on)은 실제 홈이 아니라 임시 HOME에서 읽게 한다
+ const oldHome=process.env.HOME;process.env.HOME=fs.mkdtempSync(path.join(os.tmpdir(),'pets-home-'));
  const old=process.env.CODEX_HOME,home=fs.mkdtempSync(path.join(os.tmpdir(),'pets-install-'));process.env.CODEX_HOME=home;const hooks=require('../lib/codex-hooks'),file=path.join(home,'hooks.json');
- try{fs.writeFileSync(file,JSON.stringify({hooks:{Stop:[{hooks:[{command:'existing-hook'}]}]}}));hooks.install();hooks.install();assert.equal(JSON.parse(fs.readFileSync(file)).hooks.Stop.length,2);assert.ok(hooks.installed());assert.equal(hooks.toggle(id),true);assert.equal(hooks.toggle(id),false);fs.writeFileSync(file,'{bad');assert.throws(()=>hooks.install());assert.equal(fs.readFileSync(file,'utf8'),'{bad');}finally{if(old===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=old;}
+ try{fs.writeFileSync(file,JSON.stringify({hooks:{Stop:[{hooks:[{command:'existing-hook'}]}]}}));hooks.install();hooks.install();assert.equal(JSON.parse(fs.readFileSync(file)).hooks.Stop.length,2);assert.ok(hooks.installed());assert.equal(hooks.toggle(id),true);assert.equal(hooks.toggle(id),false);
+  // 전체 기본값이 켜져 있으면: 표시 없는 세션은 켜진 상태 → 첫 토글은 끄기(.off 표시), 다음 토글은 켜기
+  const fmd=path.join(process.env.HOME,'.claude','session-pets-formmode');fs.mkdirSync(fmd,{recursive:true});fs.writeFileSync(path.join(fmd,'.default-on'),'on');
+  const id2='22222222-2222-2222-2222-222222222222';assert.equal(hooks.toggle(id2),false);assert.ok(fs.existsSync(path.join(home,'session-pets-formmode',id2+'.off')));assert.equal(hooks.toggle(id2),true);assert.ok(!fs.existsSync(path.join(home,'session-pets-formmode',id2+'.off')));
+  fs.writeFileSync(file,'{bad');assert.throws(()=>hooks.install());assert.equal(fs.readFileSync(file,'utf8'),'{bad');
+ }finally{if(old===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=old;process.env.HOME=oldHome;}
 });
 test('hook reinstall preserves mixed groups and validates before changing helper',()=>{
  const old=process.env.CODEX_HOME,home=fs.mkdtempSync(path.join(os.tmpdir(),'pets-mixed-'));process.env.CODEX_HOME=home;

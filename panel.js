@@ -183,6 +183,11 @@ const bgCheck = $('#bg-remove'); bgCheck.checked = localStorage.getItem('bgRemov
 bgCheck.addEventListener('change', () => { localStorage.setItem('bgRemove', bgCheck.checked ? '1' : '0'); window.pet.settingsChanged('bgRemove'); });
 const haloCheck = $('#alert-halo'); haloCheck.checked = localStorage.getItem('alertHalo') !== '0';
 haloCheck.addEventListener('change', () => { localStorage.setItem('alertHalo', haloCheck.checked ? '1' : '0'); window.pet.settingsChanged('alertHalo', haloCheck.checked); });
+const formDefCheck = $('#form-default');
+if (formDefCheck && window.pet.formDefault) {
+  window.pet.formDefault().then(r => { if (r && r.ok) formDefCheck.checked = r.on; }).catch(() => {});
+  formDefCheck.addEventListener('change', async () => { const r = await window.pet.formDefault(formDefCheck.checked).catch(() => null); if (r && r.ok) formDefCheck.checked = r.on; });
+}
 const spotCheck = $('#alert-spotlight'); spotCheck.checked = localStorage.getItem('alertSpotlight') !== '0';
 spotCheck.addEventListener('change', () => { localStorage.setItem('alertSpotlight', spotCheck.checked ? '1' : '0'); window.pet.settingsChanged('alertSpotlight', spotCheck.checked); });
 $('#quit-btn').addEventListener('click', () => window.pet.quit());

@@ -338,7 +338,8 @@ else:
     if ev == "UserPromptSubmit" and cwd:
         try:
             fmdir = os.path.join(home, ".claude", "session-pets-formmode")
-            on = False
+            # 가장 가까운 표시를 따른다: <enc>=켜기, <enc>.off=끄기. 아무 표시도 없으면 전체 기본값(.default-on 파일)
+            on = None
             for base in (cwd, os.path.realpath(cwd)):
                 cur = base
                 while True:
@@ -346,12 +347,17 @@ else:
                     if os.path.exists(os.path.join(fmdir, enc)):
                         on = True
                         break
+                    if os.path.exists(os.path.join(fmdir, enc + ".off")):
+                        on = False
+                        break
                     parent = os.path.dirname(cur)
                     if parent == cur:
                         break
                     cur = parent
-                if on:
+                if on is not None:
                     break
+            if on is None:
+                on = os.path.exists(os.path.join(fmdir, ".default-on"))
             if on:
                 # main.js formsDir()와 일치. ~/.claude(막힘)도, 공백 경로(permission glob 실패)도 아니어야 한다.
                 forms_dir = os.path.join(home, "Library", "claude-session-pets-forms")
@@ -374,10 +380,10 @@ description: 세션 폼 모드 on/off — 켜면 입력이 필요할 때 데스�
 
     DIR="$HOME/.claude/session-pets-formmode"; mkdir -p "$DIR"
     ENC=$(printf '%s' "$(pwd -P)" | sed 's/[^A-Za-z0-9]/-/g'); M="$DIR/$ENC"; ARG="$ARGUMENTS"
-    if [ "$ARG" = on ]; then : > "$M"; echo "🟢 세션 폼 모드 ON — 입력이 필요할 때 펫이 폼을 띄웁니다";
-    elif [ "$ARG" = off ]; then rm -f "$M"; echo "⚪️ 세션 폼 모드 OFF";
-    elif [ -e "$M" ]; then rm -f "$M"; echo "⚪️ 세션 폼 모드 OFF";
-    else : > "$M"; echo "🟢 세션 폼 모드 ON — 입력이 필요할 때 펫이 폼을 띄웁니다"; fi
+    CUR=0; if [ -e "$M" ]; then CUR=1; elif [ -e "$M.off" ]; then CUR=0; elif [ -e "$DIR/.default-on" ]; then CUR=1; fi
+    if [ "$ARG" = on ]; then WANT=1; elif [ "$ARG" = off ]; then WANT=0; else WANT=$((1-CUR)); fi
+    if [ "$WANT" = 1 ]; then rm -f "$M.off"; : > "$M"; echo "🟢 세션 폼 모드 ON — 입력이 필요할 때 펫이 폼을 띄웁니다";
+    else rm -f "$M"; if [ -e "$DIR/.default-on" ]; then : > "$M.off"; fi; echo "⚪️ 세션 폼 모드 OFF (이 폴더)"; fi
 `;
 
 // 이전 버전 훅이 설치돼 있으면 (사용자 동의는 이미 받았으므로) 조용히 최신으로 갱신
@@ -822,6 +828,22 @@ async function listSessionsRows() {
   return [...lastClaudeRows, ...(results[1].status === 'fulfilled' ? results[1].value : codex.rows)];
 }
 ipcMain.handle('list-sessions', () => listSessionsRows());
+// 폼 모드 전체 기본값: ~/.claude/session-pets-formmode/.default-on 파일이 있으면 표시 없는 폴더·세션도 폼 모드
+const FORM_DEFAULT_FILE = () => path.join(os.homedir(), '.claude', 'session-pets-formmode', '.default-on');
+function setFormDefault(on) {
+  const f = FORM_DEFAULT_FILE();
+  if (on) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, 'on'); } else { try { fs.unlinkSync(f); } catch {} }
+  return fs.existsSync(f);
+}
+// 설치(첫 실행) 기본값 = 켜짐. 한 번만 적용하고, 이후엔 사용자가 설정 탭에서 끈 상태를 존중한다
+function initFormDefaultOnce() {
+  try {
+    const flag = path.join(app.getPath('userData'), 'form-default-initialized');
+    if (fs.existsSync(flag)) return;
+    setFormDefault(true); fs.writeFileSync(flag, new Date().toISOString());
+  } catch {}
+}
+ipcMain.handle('form-default', (_e, value) => { try { return { ok: true, on: value == null ? fs.existsSync(FORM_DEFAULT_FILE()) : setFormDefault(!!value) }; } catch (e) { return { ok: false, error: String(e.message || e) }; } });
 ipcMain.handle('codex-form-mode', (_e, id) => { try { return { ok: true, on: codexHooks.toggle(id) }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('interrupt-session', async (_e, { provider, sessionId, pid }) => {
   try {
@@ -1930,6 +1952,8 @@ ipcMain.handle('stop-run', (_e, id) => {
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   upgradeHooksIfInstalled();
+  try { codexHooks.refreshScript(); } catch {} // Codex 훅 스크립트도 최신으로(기존 세션도 다음 호출부터 새 규칙)
+  initFormDefaultOnce();
   cleanupStaleStatusFiles();
   createPetManager();
   createTray();

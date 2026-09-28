@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('pet', {
   interruptSession: (session) => ipcRenderer.invoke('interrupt-session', session),
   focusAgentSession: (session) => ipcRenderer.invoke('focus-agent-session', session),
   codexFormMode: (id) => ipcRenderer.invoke('codex-form-mode', id),
+  formDefault: (value) => ipcRenderer.invoke('form-default', value),
   runCodex: (opts) => ipcRenderer.invoke('run-codex', opts),
   chatCodex: (opts) => ipcRenderer.invoke('chat-codex', opts),
   listClaudeProcs: () => ipcRenderer.invoke('list-claude-procs'),

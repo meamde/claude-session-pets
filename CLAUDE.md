@@ -179,6 +179,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 
 ### 데이터 흐름 / 조각
 - **토글**: `~/.claude/commands/session-form.md`(앱이 설치). `/session-form on|off|(빈=토글)` → 마커 `~/.claude/session-pets-formmode/<enc(cwd)>` 생성/삭제.
+- **⭐ 전체 기본값(2026-09, 사용자 요청 '설치 시 기본 옵션')**: `~/.claude/session-pets-formmode/.default-on` 파일이 있으면 표시 없는 폴더·세션도 폼 모드. 훅은 cwd에서 위로 올라가며 **가장 가까운 표시**를 따른다(`<enc>`=켜기, `<enc>.off`=끄기), 없으면 기본값. `/session-form off`는 기본값이 켜져 있을 때 `.off` 표시를 남긴다. 앱이 첫 실행 때 한 번 켜고(`initFormDefaultOnce`, userData `form-default-initialized`), 이후엔 설정 탭 '폼 모드 기본 켜기'(`form-default` IPC)가 파일을 만들고 지운다. Codex(`~/.codex/session-pets-formmode/<sid>`·`<sid>.off`)도 같은 Claude 쪽 `.default-on`을 본다. 테스트 `test/formmode.test.cjs`(실제 훅·명령을 임시 HOME에서 실행).
   `enc` = 비영숫자→`-`. 명령은 **`pwd -P`**(realpath)로 인코딩(아래 gotcha 참조).
 - **주입**: `HELPER_SRC`(상태 훅)의 UserPromptSubmit 처리에서, 마커가 있으면 폼 워크플로 지시(`FORM_INSTR`, 스키마 포함)를 컨텍스트로 주입. `<FORMDIR>`·`<SESSION_ID>`·`<CWD>`를 실제 값으로 치환.
 - **⭐ 공용 폴더 + 세션 단위 라우팅(폴더/cwd 아님)**: 폼은 **`~/Library/claude-session-pets-forms/`(공용 폴더 하나)** 에 모은다. 폼 JSON에 **`sessionId`**(훅이 값 제공 → 펫이 자기 세션 폼만 감지) · **`sessionName`**(Claude가 `/list-agents` 첫 줄에서 자기 이름 확인 → 배달 대상) · **`cwd`**(훅 제공 → 이어갈 작업 폴더)를 박는다.
@@ -304,6 +305,8 @@ open "/Applications/Hoo.app"
 15. **펫별 독립 창 구조 전환 + v1.3.0 (2026-09)** — 스크린샷 창 선택 문제의 근본 해결(위 "창 구조" 절). `lib/petwins.js`(관리자) + `pet-window`/`main-pet`/`panel`/`halo`/`dim`/`menu` 페이지, `styles/pets.css`·`panel.css` 분리, `process-per-site`로 메모리 1.9GB→420MB, 세션 등록 파일 기반 탐지(파킹된 bg 세션·`versions/<ver>` 바이너리), 테스트/스크린샷 생성기 새 구조로 재작성. 실측 함정: 렌더러 전역 `pet` 이름 충돌, `closed` 이후 `webContents` 접근("Object has been destroyed" — wcId를 미리 캡처), 하니스 스텁 app엔 `commandLine` 없음.
 
 16. **이름 변경 Claude Session Pets → Hoo + Hoo 1.0.0 (2026-09)** — 표시 이름·번들 식별자(`com.meamde.hoo`)·패키지 이름(`hoo`) 변경, userData 자동 이전, 버전을 1.0.0으로 새로 시작. 같은 릴리스에 폼 가독성(문서형 밝은 테마·2단·요약/흐름도/표·직접 입력/첨언), 말풍선 3줄 제한, 빌드 보강(점 파일 제외·유출 검사·옛 앱 종료 대기) 포함. 공개 릴리스 zip 유출 사고로 옛 릴리스 v1.0.0~v1.2.3 삭제.
+
+17. **폼 모드 기본 켜짐 + Hoo 1.1.0 (2026-09)** — 전체 기본값 `.default-on` + 폴더별 `.off`(가장 가까운 표시 우선), 첫 실행 때 켜기, 설정 탭 스위치, Codex 공용 기본값, Codex 훅 스크립트 시작 시 갱신(`codexHooks.refreshScript`, hooks.json은 안 건드림). 테스트는 실제 홈을 읽지 않게 임시 `HOME`으로 격리.
 
 ## 테스트 방법
 

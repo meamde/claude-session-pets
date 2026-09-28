@@ -56,8 +56,11 @@ try:
     tmp = target.with_suffix('.' + str(os.getpid()) + '.tmp')
     tmp.write_text(json.dumps(out, ensure_ascii=False))
     os.replace(tmp, target)
-    marker = home / 'session-pets-formmode' / sid
-    if ev == 'UserPromptSubmit' and marker.exists():
+    fm = home / 'session-pets-formmode'
+    marker = fm / sid
+    # 세션별 켜기(<sid>)/끄기(<sid>.off) 표시가 우선, 없으면 전체 기본값(.default-on)
+    form_on = marker.exists() or (not (fm / (sid + '.off')).exists() and (Path.home() / '.claude' / 'session-pets-formmode' / '.default-on').exists())  # 전체 기본값은 Claude와 공용(앱 설정 탭 스위치 하나)
+    if ev == 'UserPromptSubmit' and form_on:
         # Project-local inbox works with Codex workspace-write without global permission changes.
         forms = str(Path(data['cwd']) / '.session-pets' / 'forms')
         schema = {'provider': 'codex', 'sessionId': sid, 'cwd': data['cwd'], 'title': '질문 제목',
