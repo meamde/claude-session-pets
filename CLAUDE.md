@@ -306,7 +306,7 @@ open "/Applications/Hoo.app"
 
 16. **이름 변경 Claude Session Pets → Hoo + Hoo 1.0.0 (2026-09)** — 표시 이름·번들 식별자(`com.meamde.hoo`)·패키지 이름(`hoo`) 변경, userData 자동 이전, 버전을 1.0.0으로 새로 시작. 같은 릴리스에 폼 가독성(문서형 밝은 테마·2단·요약/흐름도/표·직접 입력/첨언), 말풍선 3줄 제한, 빌드 보강(점 파일 제외·유출 검사·옛 앱 종료 대기) 포함. 공개 릴리스 zip 유출 사고로 옛 릴리스 v1.0.0~v1.2.3 삭제.
 
-17. **폼 모드 기본 켜짐 + Hoo 1.1.0 (2026-09)** — 전체 기본값 `.default-on` + 폴더별 `.off`(가장 가까운 표시 우선), 첫 실행 때 켜기, 설정 탭 스위치, Codex 공용 기본값, Codex 훅 스크립트 시작 시 갱신(`codexHooks.refreshScript`, hooks.json은 안 건드림). 테스트는 실제 홈을 읽지 않게 임시 `HOME`으로 격리.
+17. **폼 모드 기본 켜짐 + Hoo 1.0.1 (2026-09)** — 전체 기본값 `.default-on` + 폴더별 `.off`(가장 가까운 표시 우선), 첫 실행 때 켜기, 설정 탭 스위치, Codex 공용 기본값, Codex 훅 스크립트 시작 시 갱신(`codexHooks.refreshScript`, hooks.json은 안 건드림). 테스트는 실제 홈을 읽지 않게 임시 `HOME`으로 격리.
 
 ## 테스트 방법
 
