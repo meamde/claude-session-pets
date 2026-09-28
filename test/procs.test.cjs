@@ -23,3 +23,32 @@ test('cwd가 cc-daemon 아래면 내부', () => {
   assert.equal(isInternalClaudeHelper('claude', '/private/tmp/cc-daemon-503/1b300a16/spare'), true);
   assert.equal(isInternalClaudeHelper('claude', '/Users/me/work/proj'), false);
 });
+
+test('세션 등록 파일 병합: 파킹 껍데기 제거, versions 바이너리 세션 추가, sid 고정', () => {
+  const mergeRegistry = vm.runInContext('mergeRegistry', context);
+  const allProcs = new Map([
+    [23368, { ppid: 1, cpu: 0, cpusec: 0, etime: '1:00', tty: 'ttys005', command: 'claude' }],
+    [91256, { ppid: 91016, cpu: 0, cpusec: 0, etime: '0:10', tty: 'ttys011', command: '/Users/me/.local/share/claude/versions/2.1.276 --session-id c059 --fork-session --resume x.jsonl' }],
+    [64099, { ppid: 2, cpu: 0, cpusec: 0, etime: '5:00', tty: 'ttys001', command: 'claude --continue' }],
+  ]);
+  const registry = new Map([
+    [23368, { pid: 23368, sessionId: '7a64', cwd: '/Users/me/proj', name: 'proj-88', kind: 'interactive', parkedJobId: 'c059', jobId: null }],
+    [91256, { pid: 91256, sessionId: 'c059', cwd: '/Users/me/proj', name: '파킹된 잡', kind: 'bg', parkedJobId: null, jobId: 'c059' }],
+    [64099, { pid: 64099, sessionId: 'aaaa', cwd: '/Users/me/other', name: 'other-c9', kind: 'interactive', parkedJobId: null, jobId: null }],
+    [99999, { pid: 99999, sessionId: 'dead', cwd: '/x', name: 'dead', kind: 'interactive' }], // 죽은 pid
+  ]);
+  const procs = [{ pid: 23368, command: 'claude', cwd: null }, { pid: 64099, command: 'claude --continue', cwd: null }]; // ps 필터가 잡은 것(91256은 못 잡음)
+  const out = mergeRegistry(procs, allProcs, registry);
+  const pids = out.map(p => p.pid).sort();
+  assert.deepEqual(pids, [64099, 91256], '껍데기 23368 제거, 91256 추가, 죽은 99999 무시');
+  const bg = out.find(p => p.pid === 91256);
+  assert.equal(bg.reg.sessionId, 'c059'); assert.equal(bg.cwd, '/Users/me/proj'); assert.equal(bg.tty, 'ttys011');
+});
+
+test('파킹 잡이 죽었으면 원래 터미널 세션은 그대로 보인다', () => {
+  const mergeRegistry = vm.runInContext('mergeRegistry', context);
+  const allProcs = new Map([[23368, { ppid: 1, cpu: 0, cpusec: 0, etime: '1:00', tty: 'ttys005', command: 'claude' }]]);
+  const registry = new Map([[23368, { pid: 23368, sessionId: '7a64', cwd: '/Users/me/proj', name: 'proj-88', kind: 'interactive', parkedJobId: 'c059' }], [91256, { pid: 91256, sessionId: 'c059', jobId: 'c059', kind: 'bg' }]]);
+  const out = mergeRegistry([{ pid: 23368, command: 'claude', cwd: null }], allProcs, registry);
+  assert.deepEqual(out.map(p => p.pid), [23368]); assert.equal(out[0].reg.sessionId, '7a64');
+});

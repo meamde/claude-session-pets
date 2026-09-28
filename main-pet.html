@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Main Pet</title>
+<link rel="stylesheet" href="styles/pets.css">
+<style>
+  /* 메인펫 창: 펫 박스를 창 하단 중앙에 고정. 창 자체가 화면을 돌아다닌다 */
+  #pet { left: 50%; top: auto; bottom: 0; transform: translateX(-50%) !important; }
+  /* 말풍선은 HP바(펫 위 ~40px) 위로 올려 겹치지 않게 */
+  #bubble { bottom: calc(100% + 44px); }
+</style>
+</head>
+<body>
+  <div id="pet" class="interactive anim-idle">
+    <div id="bubble"></div>
+    <div id="hpbars">
+      <img id="usage-provider-icon" src="assets/claude.png" alt="Claude">
+      <div class="hprow"><span class="hplbl">5h</span><span class="hptrack"><span class="hpfill" id="hp-session"></span></span><span class="hppct" id="hp-session-pct">–</span></div>
+      <div class="hprow"><span class="hplbl">주간</span><span class="hptrack"><span class="hpfill" id="hp-week"></span></span><span class="hppct" id="hp-week-pct">–</span></div>
+    </div>
+    <div id="zzz">💤</div>
+    <div id="sprite-wrap"><img id="sprite" class="msprite" alt="pet" hidden><canvas id="dot-sprite" class="msprite" width="32" height="32"></canvas></div>
+  </div>
+<script src="sprites.js"></script>
+<script src="main-pet.js"></script>
+</body>
+</html>

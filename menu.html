@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"><title>menu</title>
+<style>
+  /* 세션펫 우클릭 메뉴 창 — pet.html .spet-menu 모양 그대로. 항목은 ?items=<JSON>로 받고, 선택은 IPC로 메인에 */
+  * { margin:0; padding:0; box-sizing:border-box; } html, body { background:transparent; overflow:hidden; user-select:none; font-family:-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+  .spet-menu { background:linear-gradient(180deg,#33291f,#262019); border:1.5px solid #d97757; border-radius:10px; padding:4px; min-width:156px; width:max-content;
+    box-shadow:0 6px 22px rgba(0,0,0,.5), 0 0 0 3px rgba(217,119,87,.15); font-size:12px; font-weight:600; color:#fff; animation:spop2 .14s ease-out; }
+  @keyframes spop2 { from { opacity:0; transform:scale(.94); } to { opacity:1; transform:scale(1); } }
+  .spet-menu-item { padding:7px 11px; border-radius:6px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:7px; }
+  .spet-menu-item:hover { background:rgba(217,119,87,.32); }
+  .spet-menu-item .mk { width:13px; text-align:center; opacity:.95; }
+  .spet-menu-sep { height:1px; background:rgba(217,119,87,.28); margin:4px 6px; }
+</style></head>
+<body><div class="spet-menu" id="m"></div>
+<script>
+  const items = JSON.parse(new URLSearchParams(location.search).get('items') || '[]');
+  const m = document.getElementById('m');
+  for (const it of items) {
+    if (it.sep) { const s = document.createElement('div'); s.className = 'spet-menu-sep'; m.appendChild(s); continue; }
+    const d = document.createElement('div'); d.className = 'spet-menu-item';
+    const mk = document.createElement('span'); mk.className = 'mk'; mk.textContent = it.mark || ''; const tx = document.createElement('span'); tx.textContent = it.label;
+    d.append(mk, tx); d.addEventListener('click', () => window.pet.menuPick(it.id)); m.appendChild(d);
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.pet.menuPick(null); });
+  // 메인이 창 크기를 내용에 맞추도록 실제 크기를 보고
+  requestAnimationFrame(() => window.pet.menuSize(Math.ceil(m.getBoundingClientRect().width) + 4, Math.ceil(m.getBoundingClientRect().height) + 4));
+</script></body></html>

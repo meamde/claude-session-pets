@@ -2,6 +2,23 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('pet', {
   setIgnoreMouse: (ignore) => ipcRenderer.send('set-ignore-mouse', ignore),
+  // ── 펫별 독립 창 (lib/petwins.js) ──
+  petReady: (id) => ipcRenderer.send('pet-ready', id),
+  petMove: (id, x, y, haloCenter) => ipcRenderer.send('pet-move', id, x, y, haloCenter || null),
+  petAlert: (id, info) => ipcRenderer.send('pet-alert', id, info),
+  petMenu: (id, items, sx, sy) => ipcRenderer.send('pet-menu', id, items, sx, sy),
+  petAction: (id, action) => ipcRenderer.send('pet-action', id, action),
+  mainPetResize: (w, h) => ipcRenderer.send('main-pet-resize', w, h),
+  togglePanel: () => ipcRenderer.send('toggle-panel'),
+  hidePanel: () => ipcRenderer.send('hide-panel'),
+  panelEvent: (ev) => ipcRenderer.send('panel-event', ev),
+  panelDialog: (on) => ipcRenderer.send('panel-dialog', on),
+  settingsChanged: (key, value) => ipcRenderer.send('settings-changed', key, value),
+  listSessionsView: () => ipcRenderer.invoke('list-sessions-view'),
+  setDesktopHidden: (id, hidden) => ipcRenderer.invoke('set-desktop-hidden', id, hidden),
+  menuPick: (action) => ipcRenderer.send('menu-pick', action),
+  menuSize: (w, h) => ipcRenderer.send('menu-size', w, h),
+  onPetEvent: (fn) => ipcRenderer.on('pet-event', (_e, ev) => fn(ev)),
   quit: () => ipcRenderer.send('quit-app'),
   getHome: () => ipcRenderer.invoke('get-home'),
 

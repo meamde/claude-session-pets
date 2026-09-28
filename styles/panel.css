@@ -1,0 +1,223 @@
+/* Claude Session Pets — 패널 창 CSS (pet.html에서 분리) */
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* hidden 속성이 .ssprite{display:block} 등에 밀리지 않게 */
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  }
+
+  /* ── 펫 ─────────────────────────────────── */
+  /* ── 패널 ───────────────────────────────── */
+  #panel {
+    position: absolute;
+    width: 460px;
+    max-height: 520px;
+    background: rgba(28, 27, 26, .96);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    color: #eee;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 20;
+  }
+  #panel.show { display: flex; }
+  #panel-header {
+    display: flex; align-items: center;
+    padding: 10px 10px 0;
+    gap: 3px;
+  }
+  .tab {
+    padding: 6px 9px;
+    border-radius: 8px 8px 0 0;
+    font-size: 12.5px;
+    cursor: pointer;
+    color: #aaa;
+    background: transparent;
+    border: none;
+    white-space: nowrap;   /* 탭 글자 줄내림 방지 */
+    flex: none;
+  }
+  #proc-count { font-size: 11px; }
+  .tab.active { color: #fff; background: rgba(255,255,255,.08); }
+  #panel-close {
+    margin-left: auto;
+    background: none; border: none; color: #888;
+    font-size: 16px; cursor: pointer;
+  }
+  #panel-close:hover { color: #fff; }
+  .tab-body {
+    display: none;
+    flex-direction: column;
+    padding: 12px;
+    gap: 8px;
+    overflow-y: auto;
+    border-top: 1px solid rgba(255,255,255,.08);
+  }
+  .tab-body.active { display: flex; }
+
+  input[type=text], textarea {
+    width: 100%;
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px;
+    color: #eee;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  input[type=text]:focus, textarea:focus { border-color: #d97757; }
+  textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row label { font-size: 12px; color: #999; white-space: nowrap; }
+
+  button.btn {
+    background: #d97757;
+    border: none; border-radius: 8px;
+    color: #fff; font-size: 13px; font-weight: 600;
+    padding: 8px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  button.btn:hover { background: #e8865f; }
+  button.btn.ghost {
+    background: rgba(255,255,255,.08);
+    font-weight: 400;
+  }
+  button.btn.ghost:hover { background: rgba(255,255,255,.16); }
+  button.btn.danger { background: #b33a3a; }
+  button.btn.danger:hover { background: #d04444; }
+  button.btn.small { padding: 4px 9px; font-size: 12px; }
+
+  /* 세션 출력 */
+  .session {
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+  .session .s-head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #bbb;
+    margin-bottom: 6px;
+  }
+  .session .s-head .s-status { font-size: 11px; }
+  .session .s-head .s-prompt {
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #eee;
+  }
+  .session pre {
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #cfe8cf;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 180px;
+    overflow-y: auto;
+    user-select: text;
+  }
+  .session pre .err { color: #f0a0a0; }
+
+  /* 프로세스 목록 */
+  .proc {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.05);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+  }
+  .proc .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #6c6; flex-shrink: 0;
+  }
+  .proc .dot.busy { background: #f5a623; animation: pulse 1.2s infinite; }
+  .proc .dot.wait { background: #4a9eff; animation: pulse 1.2s infinite; }
+  .proc .p-info { flex: 1; min-width: 0; }
+  .proc .p-cwd {
+    color: #eee; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .proc .p-meta { color: #999; font-size: 11px; }
+  .empty { color: #888; font-size: 13px; text-align: center; padding: 16px 0; }
+  .proc-wrap { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+  .send-row {
+    display: flex; gap: 6px;
+    padding: 4px 6px 6px 24px;
+  }
+
+  .hint { font-size: 11px; color: #888; }
+  .sep { border-top: 1px solid rgba(255,255,255,.08); margin: 4px 0; }
+
+  /* 사용량 탭 */
+  #usage-body { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .ugauge { display: flex; flex-direction: column; gap: 5px; }
+  .ugauge-top { display: flex; align-items: baseline; gap: 8px; }
+  .ugauge-name { font-size: 13px; font-weight: 700; color: #eee; }
+  .ugauge-pct { font-size: 15px; font-weight: 800; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .ugauge-track { height: 12px; border-radius: 6px; background: rgba(255,255,255,.09); overflow: hidden; }
+  .ugauge-fill { height: 100%; border-radius: 6px; background: #57c060; transition: width .4s ease; }
+  .ugauge-reset { font-size: 11px; color: #999; }
+  .ublock { background: rgba(255,255,255,.05); border-radius: 10px; padding: 10px 12px; }
+  .ublock h4 { margin: 0 0 6px; font-size: 12px; color: #bbb; font-weight: 700; }
+  .ublock .big { font-size: 13px; color: #eee; }
+  .ublock ul { margin: 6px 0 0; padding-left: 16px; }
+  .ublock li { font-size: 12px; color: #cbb; margin: 2px 0; }
+
+  /* 커스텀 툴팁 (Electron 투명 오버레이에선 native title 툴팁이 안 떠서 직접 구현) */
+  #tooltip {
+    position: absolute; z-index: 50;
+    background: rgba(20,19,18,.97);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12px; color: #eee;
+    max-width: 380px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+    pointer-events: none; display: none;
+  }
+  #tooltip.show { display: block; }
+
+  /* 잡담 */
+  #chat-log {
+    display: flex; flex-direction: column; gap: 8px;
+    min-height: 180px; max-height: 300px;
+    overflow-y: auto;
+    padding: 4px 2px;
+  }
+  .msg {
+    max-width: 82%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+  .msg.me {
+    align-self: flex-end;
+    background: #d97757;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.pet {
+    align-self: flex-start;
+    background: rgba(255,255,255,.09);
+    color: #eee;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.pet.thinking { color: #999; font-style: italic; }
+  .msg.pet.error { color: #f0a0a0; }
+  .provider-row { display:flex; align-items:center; gap:8px; padding:10px 12px 0; font-size:11px; color:#aaa; }
+  .provider-row select { background:#33291f; color:#fff; border:1px solid #665044; border-radius:6px; padding:4px 8px; }
+  .provider-row span { margin-left:auto; font-size:10px; }

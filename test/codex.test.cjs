@@ -46,3 +46,17 @@ test('hook reinstall preserves mixed groups and validates before changing helper
   fs.writeFileSync(helper,'original helper');fs.writeFileSync(file,JSON.stringify({hooks:{Stop:'invalid'}}));assert.throws(()=>hooks.install());assert.equal(fs.readFileSync(helper,'utf8'),'original helper');
  } finally {if(old===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=old;}
 });
+
+test('Codex 사용량: 버킷 순서와 무관하게 codex primary=세션(5h), secondary=주간', () => {
+  const { selectUsageWindows } = require('../lib/codex.js');
+  const codex = { limitId: 'codex', primary: { windowDurationMins: 300, usedPercent: 100, resetsAt: 1 }, secondary: { windowDurationMins: 10080, usedPercent: 31, resetsAt: 2 } };
+  const reserve = { limitId: 'base_model_inference', limitName: 'gpt-reserve', primary: { windowDurationMins: 10080, usedPercent: 12, resetsAt: 3 } };
+  for (const by of [{ codex, base_model_inference: reserve }, { base_model_inference: reserve, codex }]) {
+    const u = selectUsageWindows(by);
+    assert.equal(u.session.minutes, 300); assert.equal(u.session.pct, 100);
+    assert.equal(u.weekAll.minutes, 10080); assert.equal(u.weekAll.pct, 31);
+    assert.equal(u.windows.length, 3);
+  }
+  const only = selectUsageWindows({ base_model_inference: reserve });
+  assert.equal(only.session, null); assert.equal(only.weekAll.minutes, 10080);
+});

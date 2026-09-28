@@ -24,11 +24,21 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 
 ## 파일 구조
 
-- `main.js` — Electron 메인. 프로세스 감시(ps/lsof), 상태 훅 설치/업그레이드, 트랜스크립트 판독, tty 명령 주입, `claude -p` 실행
-- `pet.js` — 렌더러. 메인펫/세션펫 상태머신, 말풍선, 패널 UI, 이미지 배경제거
+- `main.js` — Electron 메인. 프로세스 감시(ps/lsof), 상태 훅 설치/업그레이드, 트랜스크립트 판독, tty 명령 주입, `claude -p` 실행, 폼
+- **⭐ 창 구조 = 펫마다 독립 창 (2026-09 전환)**. 이전 "화면 전체를 덮는 투명 창 하나(pet.html/pet.js)"는 스크린샷 창 선택·다른 앱 클릭을 막아 폐기(사용자 결정). 지금은:
+  - `lib/petwins.js` — 메인 측 **창 관리자**. 1초 세션 감지 루프(`deps.listSessions`=`listSessionsRows`) + 상태 판정(`sessionState`/`poll` = 옛 pet.js detectEvents 이식) → 세션마다 `PetWindow` 생성·`pet-event` 전송(working/done/waiting/idle/farewell/meta/settings/workarea). 메인펫 창·패널 창·헤일로 창·딤 창·메뉴 창도 여기서. 설정(haloOn/spotlightOn/hiddenDesktop)은 `userData/pets-settings.json`.
+  - `pet-window.html/js` — 세션펫 창(280×200, `.spet` 72×110을 하단 중앙 고정). 옛 `SessionPet` 이식: 위치는 **스크린 좌표**(작업 영역 `wa`), 창 이동은 `petMove(id,x,y)`로 메인에 요청(창이 펫을 따라다님). 드래그는 `screenX/Y`. 상태는 메인이 보내고, 폼 폴링(`listForms`)·클릭·우클릭(메뉴 창 요청 `petMenu`)·이미지는 창이 직접. ⚠️ 렌더러 전역에 `pet`이라는 이름을 쓰면 preload의 `window.pet`과 충돌해 SyntaxError → `spet`.
+  - `main-pet.html/js` — 메인펫 창(360×(펫높이+130)). 상태머신·드래그·말풍선·HP바·이미지. 클릭→`togglePanel`, 우클릭→provider 전환(localStorage+`settingsChanged`).
+  - `panel.html/js` + `styles/panel.css` — 패널 창(460×520, focusable, blur 시 닫힘; 파일 다이얼로그 중엔 `panel-dialog`로 억제). 목록 탭은 메인이 `list-sessions-view`로 `mode`를 실어줌.
+  - `halo.html`(600×600 링 3연타, 알림 중 펫 발 근처, 마우스 통과) · `dim.html`(작업 영역 전체 딤, `screen-saver` 레벨 -1 = 펫 아래·다른 앱 위) · `menu.html`(우클릭 메뉴, `?items=JSON`, blur로 닫힘)
+  - `styles/pets.css` — 펫 공용 CSS(옛 pet.html에서 분리: 메인펫·HP바·말풍선·세션펫·몸짓 keyframes)
+  - 모든 창: transparent·frameless·`setAlwaysOnTop(true,'screen-saver')`·모든 스페이스·`setIgnoreMouseEvents(true,{forward:true})` + 렌더러가 `.interactive` 위에서만 마우스 수신(`set-ignore-mouse`는 sender 창 기준).
+  - **메모리**: 창=렌더러 프로세스라 창 18개에 RSS ~1.9GB였다. ~~`process-per-site` 스위치~~는 **투명 창이 무작위로 흰 배경이 되는 부작용**(실측: 같은 옵션 창 10개 중 대부분 흰색, 사용자 화면에서 펫마다 280×200 흰 사각형)이라 금지. → **펫·헤일로 창은 숨은 호스트 창(`host.html`)의 `window.open` 자식으로 연다**(`openChild`: `setWindowOpenHandler`가 frameName별 창 옵션을 주고 `did-create-window`로 창을 받음). 자식은 오프너와 렌더러를 공유하면서 투명이 유지된다(실측 창 11개=렌더러 1개, 앱 전체 ~500MB). 메인펫·패널·메뉴·딤은 개수가 고정이라 독립 창. 단점: 호스트 렌더러가 죽으면 펫 창 전부 죽음. ⚠️ 시각 검증은 `capturePage`로는 안 된다(창 배경이 흰색이어도 투명으로 찍힘) — `screencapture`로 실제 화면을 찍을 것.
+  - **헤일로 배치**: 600×600 창을 화면 맨 아래 펫 발 중심에 두면 Dock 아래로 삐져나가고, macOS가 **조금 뒤에** 창을 Dock 위로 밀어 올려 링이 펫 위쪽으로 어긋났다(실측 91pt). → 작업 영역 안으로 클램프 + 링 중심을 실제 창 위치 기준 창 안 좌표로 `center` 이벤트 전송(`placeHalo`/`sendHaloCenter`, 창 `move` 때도 재전송).
+  - 검증: `SESSION_PETS_DEBUG=1`로 바이너리 실행 시 `[pets] ready/first move` 로그, 렌더러 콘솔 에러(`[pet id] …`), 펫 창 자가 캡처 `/tmp/petwin-<id>.png`. `npm run test:ui`(test/ui-smoke.cjs + ui-preload.cjs 스텁: `window.smoke.fire(ev)`로 pet-event 주입).
 - `sprites.js` — **도트 기본 캐릭터 렌더러: 부엉이 가족**(pet.js보다 먼저 로드). 아기 부엉 `chick`(24×30, 위 4행 이펙트 여백, 세션펫 3x=72×90) / 어미 부엉 `mother`(30×34, 메인펫 `round(S.size/32)` 정수 배율 → 128 설정=4x=120×136). **정면(치비: 원 실루엣 `silhouette` + `owlEye` 테·흰자·눈동자 시선 px/py)이 기본, `walk`만 옆모습(`chickSide`/`motherSide`, 오른쪽 보기·render()가 scaleX 반전)**. 상태→프레임 함수 테이블(`CHICK`/`MOTHER`), `DotSprite`가 12fps로 캔버스 갱신(`tickAll`을 메인 rAF에서 호출). 팔레트 `PAL.claude`(오렌지·민트 스카프)/`PAL.codex`(페리윙클 `#8b95f3`·노랑 스카프). 시안 히스토리: v1 옆모습 통통 타원 → v2 길쭉("납작해지기만 했다" 피드백) → v3 정면 치비 3후보(뭉치/펭이/부엉) 중 **부엉 채택**(+옆모습 걷기 요청).
-- `pet.html` — 마크업 + 전체 CSS (별도 CSS 파일 없음)
-- `preload.js` — IPC 브리지 (펫 렌더러용)
+- ~~`pet.html`~~ — 폐기(위 창 구조 참조). 스크린샷 생성기도 창 페이지별 캡처+magick 합성으로 교체
+- `preload.js` — IPC 브리지 (펫·메인펫·패널·메뉴 창 공용. `petReady/petMove/petAlert/petMenu/petAction/mainPetResize/togglePanel/hidePanel/panelEvent/settingsChanged/listSessionsView/setDesktopHidden/menuPick/menuSize/onPetEvent` 추가)
 - `form-preload.js` — 세션 폼 창(BrowserWindow) 전용 IPC 브리지 (`window.sessionForm.submit/cancel/onOutput/onDone`)
 - `start.sh` — 개발 실행용 (`npx electron .` 백그라운드)
 - `build/icon.icns` — 앱 아이콘 (도트 어미 부엉이). `build/icon.html`(스쿼클 배경 + `DotSprites.paint` 24x, `../sprites.js` 상대 참조 — 레포 루트 기준 file://로 열어야 함)을 Electron `capturePage`로 1024 PNG → `sips`로 iconset → `iconutil -c icns`
@@ -52,6 +62,8 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
    cwd 인코딩은 **비영숫자 전부 `-` 치환** (`my_project`→`my-project`, 연속 대시 유지).
    훅 매칭(sessionId)도 이 디렉토리에서 찾으므로 인코딩이 틀리면 (위 cwd 폴백이 없던 시절) 훅까지 통째로 실패함
 3. **CPU 폴백**: 누적 CPU 시간 증가 여부 (렌더러 `sessionState`)
+
+**⭐ 세션 등록 파일(`~/.claude/sessions/<pid>.json`) = 1차 소스(`readSessionRegistry`/`mergeRegistry`)**: pid·sessionId·cwd·name·kind(interactive|bg)·status·messagingSocketPath·parkedJobId/jobId. 실측(2026-09 데몬): 사용자가 세션을 **백그라운드 잡으로 파킹**하면 터미널 프로세스(interactive)는 `parkedJobId`만 남는 껍데기가 되고, 실제 세션은 pty 호스트 아래 **`~/.local/share/claude/versions/<ver> --session-id <sid> --fork-session --resume …`**(kind `bg`, `jobId`)로 돈다 → 실행 파일 이름이 'claude'가 아니라 ps 필터가 놓쳤고(펫 없음), `injectBySessionId`가 pid를 못 찾아 **폼 배달 실패**("폼 전송 못 받았어?"). 처리: 등록된 pid는 실행 파일 이름과 무관하게 세션으로 추가, 껍데기는 잡이 살아있으면 제거(한 세션 한 펫), 등록 sessionId가 있으면 트랜스크립트 행을 정확히 집고 나머지만 위치 휴리스틱. `versions/<ver>` 바이너리도 ps 필터에 추가. 테스트 `test/procs.test.cjs`.
 
 **프로세스 필터 제외(`isInternalClaudeHelper`)**: Claude Code 데몬 도입(2026-09) 후 `claude daemon run …`·`claude bg-pty-host --bg-pty-host /tmp/cc-daemon-<uid>/<id>/spare/….pty.sock`·`claude bg-spare …`·`ClaudeCode.app/…/claude --bg-pty-host …`가 실행 파일 이름 'claude'로 필터를 통과해 cwd `/private/tmp/cc-daemon-…/spare` → **"spare" 펫이 여러 마리** 뜬 실측 버그. 인자(`daemon|bg-pty-host|bg-spare|--bg-*|--spawned-by`) 또는 cwd(`/tmp/cc-daemon-`)로 제외. 판정은 첫 토큰 이후 인자만 검사(프롬프트 텍스트 오탐 방지). 테스트 `test/procs.test.cjs`.
 
@@ -134,12 +146,17 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
   - ⭐ **"IntelliJ 정확한 창 raise가 안 된다"(2026-09 실측) = 손쉬운 사용 권한 무효화**. 앱이 ad-hoc 서명(`codesign -s -`)이라 지정 요구사항이 `cdhash H"…"`(빌드마다 바뀜)이고, macOS TCC는 그 서명으로 권한을 기억한다 → **재빌드할 때마다 손쉬운 사용·자동화 권한이 풀린다**. 그때 System Events는 `-25211 보조 접근이 허용되지 않습니다`로 실패하는데 코드가 `-1743`(자동화)만 잡아 `open -a` 앱 통째 활성화로 조용히 폴백 → "안 된다"로 보임. 수정: `systemPreferences.isTrustedAccessibilityClient(false)`로 선확인 → 없으면 `(true)`로 시스템 프롬프트 + `error:'accessibility'` 말풍선. **근본 해결 = 지정 요구사항 고정**: `build-app.sh`가 ① 전체 deep ad-hoc 서명 → ② 바깥 번들만 `codesign --force --sign - --requirements '=designated => identifier "<번들ID>"'`로 다시 서명(deep 없이 — 내부 프레임워크는 식별자가 달라 같은 요구사항을 붙이면 `nested code is modified or invalid`). DR이 cdhash가 아니라 식별자라 재빌드 후에도 TCC가 같은 앱으로 인식. **적용 첫 빌드 뒤 한 번은 설정에서 토글 off→on(기존 항목은 옛 cdhash 기준)**. 별도 인증서(`scripts/make-signing-cert.sh`, `SIGN_ID`)는 선택 사항. 권한 다이얼로그는 1분에 1회(`requestAccessibility`, 실행당 1회로 했더니 항목 제거 후 재요청이 안 떠서 변경) + 설정의 손쉬운 사용 화면(`x-apple.systempreferences:…Privacy_Accessibility`)을 매번 연다. 창 제목 검색은 cwd basename → 상위 폴더명 순(IntelliJ 제목은 "프로젝트 – 파일"이라 모듈 하위 폴더명이 없을 수 있음).
   - **창 앞으로 가져오기 호스트 판정(`findHostApp`)**: pid 조상 체인에서 `*.app/Contents/MacOS/` 경로를 찾는다. ⚠️ **iTerm2는 셸을 `~/Library/Application Support/iTerm2/iTermServer-<ver>` 데몬(launchd 직속) 아래에 띄워** 체인에 `.app`이 없다(실측: claude←zsh←login←iTermServer←launchd) → 데몬 이름으로 iTerm2 인식(`bundleId: com.googlecode.iterm2`, `open -b` 폴백). 안 하면 `nohost` → "창을 찾지 못했어요". tmux 서버도 launchd 직속이라 여전히 불가.
 
+## 스크린샷 문제 (해결됨 — 창 구조 전환)
+
+옛 구조(전체 화면 투명 창 하나)에선 macOS 스크린샷 **창 선택 모드(⌘⇧4→Space)가 커서 아래 최상단 창으로 펫 창을 잡아** 다른 창을 고를 수 없었다(실측). 시도한 임시책(전부 폐기): ① 스크린샷 UI(`screencaptureui`) 동안 창 숨김 → 썸네일이 떠 있는 몇 초간 안 돌아옴 ② 창을 하단 띠로 축소 → macOS가 창 확대 프레임에 이전 그림을 좌상단에 붙여 한 프레임 튐(번쩍) ③ `setContentProtection`(sharingType none) → 선택기가 건너뛰지 **않음** ④ 창 레벨을 일반 창 아래로 → 펫이 전부 사라져 보임 ⑤ 스크린샷 동안만 펫별 정지 그림 창으로 분리 → 어색. 결론: **펫마다 항상 독립 창**(위 창 구조). 선택기는 각 펫 창을 창으로 보고, 펫 사이는 다른 앱 창이 잡힌다.
+
 ## 사용량 표시 (/usage) — 메인펫 HP바 + 사용량 탭
 
 메인펫 머리 위에 게임 HP바처럼 2줄(`5h` 세션 / `주간`)로 Claude 구독 사용량을 표시하고, 패널 "📊 사용량" 탭에 상세를 보여준다.
 - **소스**: `claude -p "/usage"` stdout 파싱(`parseUsage`). `Current session: N% used · resets …`, `Current week (all models|Fable|…): N%`, `Last 24h/7d · N requests · M sessions`.
 - **IPC**: `get-usage`(force) — `fetchUsage`가 `/usage` 실행(콜드 스타트 7~14초라 **60초 캐시** + inflight 중복 방지). HP바는 시작 시 1회 + **5분 주기**(`refreshUsage(false)`), 탭 열 때 `refreshUsage(true)` 강제 갱신.
 - **HP바**(`#hpbars`, 메인펫 `#pet` 위 절대배치): `5h`=세션, `주간`=all models 주간. `usageColor(pct)`로 게이지 색(≥90 빨강/≥75 주황/≥50 노랑/그외 초록). 세션 리셋 직후엔 `/usage`에 세션 라인이 잠깐 없어 `–`로 뜰 수 있음(다음 갱신에 0%로).
+- **Codex 사용량**(`lib/codex.js selectUsageWindows`): `account/rateLimits/read`의 `rateLimitsByLimitId`는 **버킷이 둘 이상**(실측: `codex`=primary 300분·secondary 10080분, `base_model_inference`(gpt-reserve)=primary 10080분). 펼친 배열 [0],[1]을 세션/주간으로 쓰면 키 순서에 따라 HP바 두 줄이 모두 "5h"가 된다(실측 버그) → `codex` 버킷 primary(<1일)=세션, secondary=주간으로 고정, 나머지 버킷은 탭 `windows`에만. HP바 라벨은 `minutes`로 도출(300→5h, 10080→주간).
 - **탭**(`renderUsageTab`): 세션(5h) + 주간 모델별(전체·Fable 등) 게이지 + 24h/7d 요약. DOM API로 렌더(문자열 innerHTML 금지 — XSS/안정성).
 
 ## 세션 폼 (docs/form) — 입력 필요 항목을 펫이 폼으로 띄우고, 답을 세션에 되돌림
@@ -279,6 +296,8 @@ open "/Applications/Claude Session Pets.app"
 13. **유휴 세션 "작업 완료" 반복 수정 + v1.2.2 (2026-09)** — 원인 ① 트랜스크립트 활동 시각을 mtime으로 재서 유휴 중 부기 항목 추가마다 완료 반복 → 마지막 메시지 timestamp 기준(`parseTranscriptTail`). ② 실행되지 않은 대기열 프롬프트(user 텍스트만 남고 Stop 없음)로 훅 working 고착 → `stalePrompt`(600초) 우선 idle. ③ 긴 도구 실행 중 Notification이 waiting으로 덮음 → `notification_type` 가드. 진단 방법: 상태 파일 `state/ts`, 트랜스크립트 tail의 항목 유형·timestamp를 파이썬으로 나열해 유휴 구간에 무엇이 붙었는지 확인(`test/transcript.test.cjs`에 재현).
 
 14. **IntelliJ 정확한 창 raise·권한·spare 펫 + v1.2.3 (2026-09)** — ① ad-hoc 서명(cdhash DR) 때문에 재빌드마다 손쉬운 사용 권한이 풀려 창 raise가 조용히 폴백 → `isTrustedAccessibilityClient` 선확인·1분 간격 재요청·설정 화면 열기, **`build-app.sh`가 바깥 번들 DR을 번들 식별자로 고정**(내부는 deep ad-hoc). ② 창 제목 검색 cwd → 상위 폴더명 재시도. ③ Claude Code 데몬 도우미(`daemon`/`bg-pty-host`/`bg-spare`, cwd `/tmp/cc-daemon-…/spare`)를 세션으로 오인한 "spare" 펫 → `isInternalClaudeHelper` 제외. 릴리스는 사용자 요청 시에만(메모리 규칙).
+
+15. **펫별 독립 창 구조 전환 + v1.3.0 (2026-09)** — 스크린샷 창 선택 문제의 근본 해결(위 "창 구조" 절). `lib/petwins.js`(관리자) + `pet-window`/`main-pet`/`panel`/`halo`/`dim`/`menu` 페이지, `styles/pets.css`·`panel.css` 분리, `process-per-site`로 메모리 1.9GB→420MB, 세션 등록 파일 기반 탐지(파킹된 bg 세션·`versions/<ver>` 바이너리), 테스트/스크린샷 생성기 새 구조로 재작성. 실측 함정: 렌더러 전역 `pet` 이름 충돌, `closed` 이후 `webContents` 접근("Object has been destroyed" — wcId를 미리 캡처), 하니스 스텁 app엔 `commandLine` 없음.
 
 ## 테스트 방법
 

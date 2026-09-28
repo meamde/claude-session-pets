@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Claude Session Pets — 패널</title>
+<link rel="stylesheet" href="styles/panel.css">
+<style>
+  /* 패널 창: 창 = 패널. 투명 창에 둥근 패널 하나 */
+  html, body { background: transparent; }
+  #panel { display: flex; position: absolute; inset: 0; width: auto; max-height: none; }
+</style>
+</head>
+<body>
+<div id="panel" class="interactive">
+    <div class="provider-row"><label for="provider-select">명령·잡담·사용량</label><select id="provider-select"><option value="claude">Claude</option><option value="codex">Codex</option></select><span>세션 목록은 함께 표시</span></div>
+    <div id="panel-header">
+      <button class="tab active" data-tab="chat">💬 잡담</button>
+      <button class="tab" data-tab="cmd">🗣️ 명령</button>
+      <button class="tab" data-tab="procs">📋 목록 <span id="proc-count"></span></button>
+      <button class="tab" data-tab="usage">📊 사용량</button>
+      <button class="tab" data-tab="settings">⚙️ 설정</button>
+      <button id="panel-close">✕</button>
+    </div>
+
+    <div class="tab-body active" data-tab="chat">
+      <div id="chat-log"><div class="empty">아무 얘기나 걸어보세요 🐾</div></div>
+      <div class="row">
+        <input type="text" id="chat-input" placeholder="오늘 하루 어땠어요? (Enter 전송)">
+        <button class="btn" id="chat-send">전송</button>
+      </div>
+      <div class="row">
+        <span class="hint" style="flex:1">대화 맥락이 유지됩니다</span>
+        <button class="btn ghost small" id="chat-reset">새 대화</button>
+      </div>
+    </div>
+
+    <div class="tab-body" data-tab="cmd">
+      <div class="row">
+        <label>작업 폴더</label>
+        <input type="text" id="cwd-input" placeholder="~">
+      </div>
+      <textarea id="prompt-input" placeholder="선택한 AI에게 시킬 일을 입력하세요… (⌘+Enter 실행)"></textarea>
+      <div class="row">
+        <button class="btn" id="run-btn">▶ 실행</button>
+        <span class="hint">선택한 AI로 실행하고 결과를 아래에 표시합니다</span>
+      </div>
+      <div id="sessions"></div>
+    </div>
+
+    <div class="tab-body" data-tab="procs">
+      <div class="row">
+        <span class="hint" style="flex:1">이 PC에서 연결된 Claude · Codex 세션</span>
+        <button class="btn ghost small" id="refresh-procs">새로고침</button>
+      </div>
+      <div id="proc-list"><div class="empty">불러오는 중…</div></div>
+    </div>
+
+    <div class="tab-body" data-tab="usage">
+      <div class="row">
+        <span class="hint" id="usage-caption" style="flex:1">Claude 구독 사용량</span>
+        <button class="btn ghost small" id="refresh-usage">새로고침</button>
+      </div>
+      <div id="usage-body"><div class="empty">불러오는 중…</div></div>
+    </div>
+
+    <div class="tab-body" data-tab="settings">
+      <div class="row">
+        <button class="btn" id="change-image">🖼️ 펫 이미지 변경…</button>
+        <button class="btn ghost" id="reset-image" title="커스텀 이미지를 지우고 기본 도트 어미새로">🐾 기본 모습으로</button>
+        <span class="hint">또는 이미지를 펫 위로 드래그&드롭</span>
+      </div>
+      <div class="row">
+        <label>배경 자동 제거</label>
+        <input type="checkbox" id="bg-remove" checked>
+        <span class="hint">단색 배경 사진을 넣으면 배경을 지워줍니다</span>
+      </div>
+      <div class="row">
+        <label>크기</label>
+        <input type="range" id="size-slider" min="72" max="256" value="128" style="flex:1">
+        <span id="size-label" class="hint">128px</span>
+      </div>
+      <div class="row">
+        <label>좌우 반전</label>
+        <input type="checkbox" id="flip-check">
+        <span class="hint">이미지가 왼쪽을 보고 있으면 체크</span>
+      </div>
+      <div class="row" style="margin-top:6px"><span class="hint" style="flex:1;font-weight:700;color:#d8cdbf">완료·입력 알림 강조</span></div>
+      <div class="row">
+        <label>알림 파동(링)</label>
+        <input type="checkbox" id="alert-halo" checked>
+        <span class="hint">완료·입력 필요 시 펫 주위로 링이 퍼집니다</span>
+      </div>
+      <div class="row">
+        <label>스포트라이트</label>
+        <input type="checkbox" id="alert-spotlight" checked>
+        <span class="hint">오래 확인 안 하면 화면을 어둡게 해 강조합니다</span>
+      </div>
+      <div class="sep"></div>
+      <div class="row">
+        <button class="btn danger" id="quit-btn">앱 종료</button>
+      </div>
+    </div>
+  </div>
+  <div id="tooltip"></div>
+<script src="panel.js"></script>
+</body>
+</html>

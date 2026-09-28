@@ -10,41 +10,25 @@ const codex = new CodexProvider();
 
 let win = null;
 let tray = null;
+// 펫마다 창(=렌더러)이라 세션이 많으면 프로세스가 수십 개가 된다 → 같은 사이트(file://)의 창들을 한 렌더러 프로세스에 모아 메모리를 줄인다.
+// (실측: 창 18개 기준 개별 프로세스 ~1.9GB RSS → 공유 시 크게 감소). 단점: 렌더러 하나가 죽으면 펫 창이 모두 함께 죽는다.
+// ⚠️ process-per-site 스위치 금지: 투명 창이 무작위로 흰 배경이 된다. 렌더러 공유는 lib/petwins.js의 window.open 창 풀로 한다
 const runs = new Map(); // id -> child process (claude -p sessions we spawned)
 
 const IMAGE_PATH = () => path.join(app.getPath('userData'), 'pet-image.png');
 
-function createWindow() {
-  const { workArea } = screen.getPrimaryDisplay();
-  win = new BrowserWindow({
-    x: workArea.x,
-    y: workArea.y,
-    width: workArea.width,
-    height: workArea.height,
-    transparent: true,
-    frame: false,
-    resizable: false,
-    movable: false,
-    hasShadow: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    focusable: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setIgnoreMouseEvents(true, { forward: true });
-  win.loadFile('pet.html');
-
-  screen.on('display-metrics-changed', () => {
-    const wa = screen.getPrimaryDisplay().workArea;
-    win.setBounds(wa);
-    win.webContents.send('work-area-changed', wa);
-  });
+// 펫 창 관리자(lib/petwins.js): 세션 감지 루프 + 펫마다 독립 창 + 메인펫·패널·헤일로·딤·메뉴 창.
+// (이전엔 화면 전체를 덮는 투명 창 하나에 모두 그렸다 — 스크린샷 창 선택·다른 앱 클릭을 막아 폐기)
+let petMgr = null;
+const runPids = new Set(); // 우리가 띄운 claude -p / codex exec 자식 pid — 세션펫으로 만들지 않는다
+function createPetManager() {
+  petMgr = require('./lib/petwins').createPetManager({ app, BrowserWindow, screen, ipcMain, deps: {
+    listSessions: listSessionsRows,
+    isQuiet: (p) => runPids.has(p.pid) || !!p.chat,
+    runningCount: () => runs.size,
+  } });
+  petMgr.start();
+  win = petMgr.mainWin; // 다이얼로그 부모 등 기존 참조용
 }
 
 function createTray() {
@@ -70,7 +54,7 @@ function createTray() {
 function refreshTrayMenu() {
   const installed = hooksInstalled();
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '펫 보이기/숨기기', click: () => (win.isVisible() ? win.hide() : win.show()) },
+    { label: '펫 보이기/숨기기', click: () => petMgr && petMgr.toggleVisible() },
     { label: '펫 이미지 변경…', click: () => pickImage() },
     { type: 'separator' },
     installed
@@ -98,7 +82,7 @@ async function pickImage() {
   const data = fs.readFileSync(r.filePaths[0]);
   fs.writeFileSync(IMAGE_PATH(), data);
   const url = 'data:image/png;base64,' + data.toString('base64');
-  win.webContents.send('image-changed', url);
+  if (petMgr && petMgr.mainWin) petMgr.mainWin.webContents.send('image-changed', url);
   return url;
 }
 
@@ -554,10 +538,6 @@ ipcMain.handle('install-hooks', () => promptInstallHooks(true));
 
 // ── 마우스 통과 제어 ─────────────────────────────────────────
 
-ipcMain.on('set-ignore-mouse', (_e, ignore) => {
-  win.setIgnoreMouseEvents(ignore, { forward: true });
-});
-
 ipcMain.on('quit-app', () => app.quit());
 
 ipcMain.handle('get-home', () => os.homedir());
@@ -675,13 +655,53 @@ function listSessionsForCwd(cwd) {
   });
 }
 
+// ── 세션 등록 파일(~/.claude/sessions/<pid>.json) — Claude Code가 직접 쓰는 1차 소스 ──
+// 실측(2026-09, 데몬 도입 후): 사용자가 세션을 백그라운드 잡으로 '파킹'하면 원래 터미널 프로세스(kind interactive)는
+// parkedJobId만 남는 껍데기가 되고, 실제 세션은 pty 호스트 아래 `~/.local/share/claude/versions/<ver> --session-id <sid> …`
+// (kind 'bg', jobId)로 돈다. 실행 파일 이름이 'claude'가 아니라 ps 필터가 놓쳐 펫도 없고 폼 배달(sid→pid)도 실패했다.
+// 등록 파일은 pid·sessionId·cwd·name·messagingSocketPath를 정확히 담고 있어 트랜스크립트 mtime 휴리스틱보다 우월하다.
+function readSessionRegistry() {
+  const map = new Map();
+  let files = [];
+  try { files = fs.readdirSync(path.join(HOOK_DIR(), 'sessions')); } catch { return map; }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(HOOK_DIR(), 'sessions', f), 'utf8'));
+      const pid = Number(j.pid || f.replace(/\.json$/, ''));
+      if (!pid) continue;
+      map.set(pid, { pid, sessionId: j.sessionId || null, cwd: j.cwd || null, name: j.name || null, kind: j.kind || null, status: j.status || null, parkedJobId: j.parkedJobId || null, jobId: j.jobId || null, socketPath: j.messagingSocketPath || null });
+    } catch {}
+  }
+  return map;
+}
+// ps에서 잡은 procs와 등록 파일을 합친다. allProcs = pid → ps 정보(전 프로세스).
+//  · 등록된 pid가 살아있고 procs에 없으면 추가(실행 파일 이름이 뭐든 세션이다)
+//  · parkedJobId가 있는 껍데기는 그 잡(jobId 일치)이 살아있으면 제거(한 세션에 펫 하나)
+//  · 등록 항목이 있는 proc는 sessionId/cwd/name을 등록값으로 고정(reg)
+function mergeRegistry(procs, allProcs, registry) {
+  const aliveJobs = new Set();
+  for (const [pid, r] of registry) if (r.jobId && allProcs.has(pid)) aliveJobs.add(r.jobId);
+  for (const [pid, r] of registry) {
+    if (!allProcs.has(pid)) continue;
+    if (r.parkedJobId && aliveJobs.has(r.parkedJobId)) { const i = procs.findIndex(p => p.pid === pid); if (i >= 0) procs.splice(i, 1); continue; }
+    let p = procs.find(x => x.pid === pid);
+    if (!p) { const a = allProcs.get(pid); p = { pid, ppid: a.ppid, cpu: a.cpu, cpusec: a.cpusec, etime: a.etime, tty: a.tty, command: a.command, cwd: null, chat: chatPids.has(pid) }; procs.push(p); }
+    p.reg = r;
+    if (r.cwd) p.cwd = r.cwd;
+  }
+  return procs;
+}
+
 async function computeProcs() {
   const out = await execFileP('ps', ['-axo', 'pid=,ppid=,pcpu=,cputime=,etime=,tty=,command='], true);
   const procs = [];
+  const allProcs = new Map();
   for (const line of out.split('\n')) {
     const m = line.match(/^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
     if (!m) continue;
     const [, pid, ppid, cpu, cputime, etime, tty, command] = m;
+    allProcs.set(Number(pid), { ppid: Number(ppid), cpu: Number(cpu), cpusec: cputimeToSec(cputime), etime, tty: tty === '??' ? null : tty, command: command.trim() });
     const first = command.trim().split(/\s+/)[0] || '';
     const base = path.basename(first);
     // 제외/판정은 실행 파일 경로(first token)로만 한다. command 전체로 검사하면
@@ -693,6 +713,7 @@ async function computeProcs() {
     const isClaude = base === 'claude' ||
       (/(^|\/)node$/.test(first) && /\/claude(\s|$)/.test(command)) ||
       /\/\.local\/(bin|share)\/claude$/.test(first) ||
+      /\/\.local\/share\/claude\/versions\/[^/]+$/.test(first) ||   // 데몬이 띄우는 버전 바이너리 (--session-id …)
       /\/\.claude\/local\/claude$/.test(first);
     if (!isClaude) continue;
     if (isInternalClaudeHelper(command)) continue; // 데몬/spare pty 도우미 — 세션 아님
@@ -708,7 +729,8 @@ async function computeProcs() {
       chat: chatPids.has(Number(pid)),
     });
   }
-  // 작업 디렉토리 조회 (lsof 일괄)
+  mergeRegistry(procs, allProcs, readSessionRegistry());
+  // 작업 디렉토리 조회 (lsof 일괄) — 등록 파일에 cwd가 있는 건 이미 채워짐
   if (procs.length) {
     const out2 = await execFileP('lsof', ['-a', '-p', procs.map(p => p.pid).join(','), '-d', 'cwd', '-Fn']);
     let cur = null;
@@ -719,8 +741,17 @@ async function computeProcs() {
         if (p) p.cwd = l.slice(1);
       }
     }
-    // cwd가 cc-daemon 아래인 것도 내부 도우미(spare) — 2차 제외
-    for (let i = procs.length - 1; i >= 0; i--) if (isInternalClaudeHelper(procs[i].command, procs[i].cwd)) procs.splice(i, 1);
+    // cwd가 cc-daemon 아래인 것도 내부 도우미(spare) — 2차 제외 (등록 파일에 있는 세션은 예외)
+    for (let i = procs.length - 1; i >= 0; i--) if (!procs[i].reg && isInternalClaudeHelper(procs[i].command, procs[i].cwd)) procs.splice(i, 1);
+  }
+  // 등록 파일에는 있는데 lsof를 못 돌린(방금 추가된) proc의 cwd는 등록값(mergeRegistry가 채움). 그래도 없으면 lsof 한 번 더
+  const noCwd = procs.filter(p => !p.cwd);
+  if (noCwd.length) {
+    try {
+      const out3 = await execFileP('lsof', ['-a', '-p', noCwd.map(p => p.pid).join(','), '-d', 'cwd', '-Fn']);
+      let cur = null;
+      for (const l of out3.split('\n')) { if (l.startsWith('p')) cur = Number(l.slice(1)); else if (l.startsWith('n') && cur != null) { const p = procs.find(x => x.pid === cur); if (p && !p.cwd) p.cwd = l.slice(1); } }
+    } catch {}
   }
   // 상태 판독: 훅(가장 정확) → 트랜스크립트 → (렌더러에서 CPU 폴백)
   // 같은 cwd에 세션이 여러 개면 트랜스크립트 하나만 보면 모든 펫이 같은 상태로 보인다.
@@ -738,8 +769,15 @@ async function computeProcs() {
     group.sort((a, b) => a.pid - b.pid);
     const sessions = listSessionsForCwd(cwd);
     const hookRows = hooksByCwd.get(cwd) || [];
+    // 등록 파일로 sessionId를 아는 proc은 그 세션 행을 정확히 집고, 나머지만 위치(pid순↔mtime순) 휴리스틱으로 배정
+    const taken = new Set();
+    const assigned = new Map();
+    for (const p of group) if (p.reg && p.reg.sessionId) { const row = sessions.find(r => r.sessionId === p.reg.sessionId); if (row) { assigned.set(p, row); taken.add(row); } else assigned.set(p, { sessionId: p.reg.sessionId, state: 'unknown', ageSec: Infinity, stalePrompt: false }); }
+    const pool = sessions.filter(r => !taken.has(r));
+    let k = 0;
+    for (const p of group) if (!assigned.has(p)) assigned.set(p, pool[k++] || null);
     group.forEach((p, i) => {
-      const s = sessions[i] || null;
+      const s = assigned.get(p) || null;
       p.tstate = s ? s.state : 'unknown';
       p.tage = s ? s.ageSec : Infinity;
       p.tstale = !!(s && s.stalePrompt); // 응답 없이 오래된 user 프롬프트(실행 안 된 대기열 입력) — 훅이 working이어도 유휴로 본다
@@ -752,7 +790,8 @@ async function computeProcs() {
       // 펫이 "자기 세션"을 식별하도록 session_id를 실어준다(폼을 세션 단위로 매칭하기 위함)
       p.sessionId = (s && s.sessionId) || (hookRows[i] && hookRows[i].sessionId) || null;
       // 크로스세션 세션 이름(myproj-e4 등) — 같은 폴더 다중 세션 구분용 펫 라벨. ~/.claude/sessions/<pid>.json에 있음.
-      p.sessionName = readSessionName(p.pid);
+      p.sessionName = (p.reg && p.reg.name) || readSessionName(p.pid);
+      p.kind = p.reg ? p.reg.kind : null; // 'interactive' | 'bg'(파킹된 백그라운드 잡)
       p.hookState = hs ? hs.state : null;
       p.hookAge = hs ? hs.ageSec : Infinity;
       p.hookTask = hs ? hs.task : null;
@@ -763,11 +802,12 @@ async function computeProcs() {
 }
 ipcMain.handle('list-claude-procs', computeProcs);
 let lastClaudeRows = [];
-ipcMain.handle('list-sessions', async () => {
+async function listSessionsRows() {
   const results = await Promise.allSettled([computeProcs(), codex.list()]);
   if (results[0].status === 'fulfilled') lastClaudeRows = results[0].value.map(p => ({ ...p, provider: 'claude', id: 'claude:' + p.pid }));
   return [...lastClaudeRows, ...(results[1].status === 'fulfilled' ? results[1].value : codex.rows)];
-});
+}
+ipcMain.handle('list-sessions', () => listSessionsRows());
 ipcMain.handle('codex-form-mode', (_e, id) => { try { return { ok: true, on: codexHooks.toggle(id) }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('interrupt-session', async (_e, { provider, sessionId, pid }) => {
   try {
@@ -787,9 +827,9 @@ ipcMain.handle('run-codex', (_e, { id, prompt, cwd }) => {
   try {
     if (!prompt || typeof prompt !== 'string') throw Error('프롬프트가 필요해요');
     const child = codex.run({ prompt, cwd: cwd || os.homedir(), onOutput: (chunk, stderr) => {
-      if (!win.isDestroyed()) win.webContents.send('run-output', { id, chunk, stderr });
-    }, onDone: ({ code, error }) => { runs.delete(id); if (!win.isDestroyed()) win.webContents.send('run-done', { id, code, error }); } });
-    runs.set(id, child); return { ok: true, pid: child.pid };
+      if (petMgr) petMgr.panelSend('run-output', { id, chunk, stderr });
+    }, onDone: ({ code, error }) => { runs.delete(id); runPids.delete(child.pid); if (petMgr) petMgr.panelSend('run-done', { id, code, error }); } });
+    runs.set(id, child); if (child.pid) runPids.add(child.pid); return { ok: true, pid: child.pid };
   } catch (err) { return { ok: false, error: err.message }; }
 });
 ipcMain.handle('chat-codex', (_e, { message, sessionId }) => new Promise(resolve => {
@@ -1168,16 +1208,16 @@ ipcMain.handle('run-claude', (e, { id, prompt, cwd }) => {
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
-  runs.set(id, child);
-  const send = (ch, data) => { if (!win.isDestroyed()) win.webContents.send(ch, data); };
+  runs.set(id, child); if (child.pid) runPids.add(child.pid);
+  const send = (ch, data) => { if (petMgr) petMgr.panelSend(ch, data); };
   child.stdout.on('data', d => send('run-output', { id, chunk: d.toString() }));
   child.stderr.on('data', d => send('run-output', { id, chunk: d.toString(), stderr: true }));
   child.on('close', (code) => {
-    runs.delete(id);
+    runs.delete(id); runPids.delete(child.pid);
     send('run-done', { id, code });
   });
   child.on('error', (err) => {
-    runs.delete(id);
+    runs.delete(id); runPids.delete(child.pid);
     send('run-done', { id, code: -1, error: String(err.message || err) });
   });
   return { ok: true, pid: child.pid, cwd: dir };
@@ -1719,16 +1759,17 @@ app.whenReady().then(() => {
   if (app.dock) app.dock.hide();
   upgradeHooksIfInstalled();
   cleanupStaleStatusFiles();
-  createWindow();
+  createPetManager();
   createTray();
   // 훅 미설치 시 설치 여부 확인 (창이 뜬 뒤)
-  win.webContents.once('did-finish-load', () => {
+  if (win) win.webContents.once('did-finish-load', () => {
     setTimeout(() => promptInstallHooks(false).then(refreshTrayMenu), 1200);
   });
 });
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  if (petMgr) petMgr.stop();
   codex.close();
   for (const [, child] of runs) { try { child.kill('SIGTERM'); } catch {} }
   // 잡담용 자식(claude -p)도 함께 정리 — 방치하면 앱 종료 후 고아 프로세스가 남고,

@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>dim</title>
+<style>
+  /* 스포트라이트 딤 창: 작업 영역 전체를 반투명 검정으로 덮는다(마우스 통과, 펫 창들보다 아래 레벨). 알림이 오래 미확인일 때만 존재 */
+  * { margin:0; padding:0; } html, body { width:100%; height:100%; overflow:hidden; background:transparent; }
+  #d { position:fixed; inset:0; background:rgba(0,0,0,.5); opacity:0; transition:opacity .8s ease; }
+  #d.on { opacity:1; }
+  @media (prefers-reduced-motion: reduce) { #d { transition:none; } }
+</style></head>
+<body><div id="d"></div><script>requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('d').classList.add('on')));</script></body></html>
