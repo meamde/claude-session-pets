@@ -1,6 +1,6 @@
 {
   "name": "hoo",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "macOS desktop pets for Claude Code and Codex CLI / desktop sessions",
   "main": "main.js",
   "scripts": {

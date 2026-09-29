@@ -55,6 +55,7 @@ function tick(t) {
 
 // ── 드래그 & 클릭 ──
 let downPos = null, grabOffset = null, moved = false;
+let updatePendingUntil = 0, updateText = null; // 새 버전 알림 말풍선이 떠 있는 동안(1분) 메인펫 클릭 = 업데이트 설치
 petEl.addEventListener('mousedown', (e) => { if (e.button !== 0) return; downPos = { x: e.screenX, y: e.screenY }; grabOffset = { x: e.screenX - S.ax, y: e.screenY - S.ay }; moved = false; e.preventDefault(); });
 document.addEventListener('mousemove', (e) => {
   if (!downPos) return;
@@ -64,6 +65,7 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
   if (!downPos) return; const wasDrag = moved; downPos = null; petEl.classList.remove('dragging');
   if (wasDrag) { S.ax = clampX(S.ax); S.vy = 0; if (S.ay < ground()) enterState('fall', 0); else { S.ay = ground(); enterState('idle', 1500); } }
+  else if (updatePendingUntil > Date.now()) { updatePendingUntil = 0; window.pet.installUpdate(); } // 새 버전 알림 중 클릭 = 설치
   else window.pet.togglePanel();
 });
 petEl.addEventListener('contextmenu', (e) => { // 우클릭: 명령·잡담·사용량 대상 Claude ↔ Codex 전환 (패널 select와 동일 설정)
@@ -85,7 +87,11 @@ function say(text, ms = 2500) {
   const r = bubbleEl.getBoundingClientRect(); let shift = 0;
   if (r.left < 4) shift = 4 - r.left; else if (r.right > WIN_W - 4) shift = WIN_W - 4 - r.right;
   if (shift) bubbleEl.style.setProperty('--shift', shift + 'px');
-  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => bubbleEl.classList.remove('show'), ms);
+  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => {
+    bubbleEl.classList.remove('show');
+    // 다른 말풍선(인사·알림)이 업데이트 알림을 덮었으면, 알림 시간이 남은 동안 다시 보여 준다
+    if (updateText && text !== updateText && updatePendingUntil > Date.now()) say(updateText, updatePendingUntil - Date.now());
+  }, ms);
 }
 const notifyQueue = []; let notifying = false;
 function notify(text) { notifyQueue.push(text); if (!notifying) drainNotify(); }
@@ -151,6 +157,7 @@ window.pet.onPetEvent(async (ev) => {
   if (ev.type === 'workarea') { wa = ev.wa; S.ax = clampX(S.ax); if (S.state !== 'drag' && S.state !== 'fall') S.ay = ground(); render(); }
   else if (ev.type === 'say') say(ev.text, ev.ms || 2500);
   else if (ev.type === 'notify') notify(ev.text);
+  else if (ev.type === 'update') { updatePendingUntil = Date.now() + 60000; updateText = '🆕 Hoo ' + ev.version + '가 나왔어요\n저를 누르면 설치해요'; say(updateText, 60000); }
   else if (ev.type === 'main-state') { S.working = !!ev.working; S.procBusy = !!ev.procBusy; if (S.state === 'idle') setAnim(S.working ? 'work' : 'idle'); }
   else if (ev.type === 'anim') { if (S.state === 'idle') setAnim(ev.name); }
   else if (ev.type === 'panel') { S.panelOpen = !!ev.open; }

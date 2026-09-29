@@ -6,6 +6,8 @@ const os = require('os');
 const crypto = require('crypto');
 const { CodexProvider } = require('./lib/codex');
 const codexHooks = require('./lib/codex-hooks');
+const { createUpdater } = require('./lib/updater');
+let updater = null;
 const codex = new CodexProvider();
 
 let win = null;
@@ -78,7 +80,11 @@ function refreshTrayMenu() {
       try { codexHooks.install(); refreshTrayMenu(); dialog.showMessageBox(win, { message: 'Codex 훅 설치 완료', detail: 'Codex에서 /hooks를 열어 새 훅을 신뢰해주세요. 폼 모드는 세션펫 우클릭 메뉴에서 켤 수 있어요.' }); }
       catch (err) { dialog.showErrorBox('Codex 훅 설치 실패', err.message); }
     } },
-    { label: '종료', click: () => app.quit() },
+    { type: 'separator' },
+    ...(updater && updater.latest
+      ? [{ label: '업데이트 설치 (v' + updater.latest.version + ')', click: () => startUpdateInstall() }]
+      : [{ label: '업데이트 확인 (v' + app.getVersion() + ')', click: async () => { const r = updater && await updater.check(); if (!r && petMgr) petMgr.say('지금이 최신 버전이에요 (v' + app.getVersion() + ')', 3000); } }]),
+    { label: '종료', click: () => quitWith('tray-menu') },
   ]));
 }
 
@@ -558,7 +564,7 @@ ipcMain.handle('install-hooks', () => promptInstallHooks(true));
 
 // ── 마우스 통과 제어 ─────────────────────────────────────────
 
-ipcMain.on('quit-app', () => app.quit());
+ipcMain.on('quit-app', () => quitWith('panel-button'));
 
 ipcMain.handle('get-home', () => os.homedir());
 
@@ -576,9 +582,13 @@ function execFileP(cmd, args, strict = false) {
 // `claude bg-spare --bg-spare …claim.sock`, `ClaudeCode.app/Contents/MacOS/claude --bg-pty-host …`가 실행 파일 이름이 'claude'라
 // 기존 필터를 통과했고, cwd가 `/private/tmp/cc-daemon-…/spare`여서 "spare"라는 이름의 펫이 여러 마리 떴다.
 const INTERNAL_CLAUDE_ARGS = /(^|\s)(daemon|bg-pty-host|bg-spare)(\s|$)|--bg-(pty-host|spare)(\s|$)|--spawned-by(\s|$)/;
+// 세션이 아닌 하위 명령(첫 인자만 본다 → `claude -p "agents 정리"` 같은 프롬프트 단어는 오탐 안 함).
+// 실측(2026-09): `claude agents`(에이전트 목록 화면)가 "personal-git" 펫으로 떴다.
+const NON_SESSION_SUBCOMMANDS = /^(agents|mcp|config|doctor|update|upgrade|install|plugin|plugins|setup-token|auth|migrate-installer|completion)(\s|$)/;
 function isInternalClaudeHelper(command, cwd) {
   const rest = command.trim().split(/\s+/).slice(1).join(' ');
   if (INTERNAL_CLAUDE_ARGS.test(rest)) return true;
+  if (NON_SESSION_SUBCOMMANDS.test(rest)) return true;
   if (cwd && /^(\/private)?\/tmp\/cc-daemon-/.test(cwd)) return true;
   return false;
 }
@@ -704,6 +714,8 @@ function mergeRegistry(procs, allProcs, registry) {
   for (const [pid, r] of registry) if (r.jobId && allProcs.has(pid)) aliveJobs.add(r.jobId);
   for (const [pid, r] of registry) {
     if (!allProcs.has(pid)) continue;
+    // 등록 파일로 들어와도 데몬 도우미·예비 프로세스(bg-spare 등)는 세션이 아니다 (실측: bg-spare가 등록돼 "5852b0f1" 펫이 뜸)
+    if (isInternalClaudeHelper(allProcs.get(pid).command || '', r.cwd)) { const i = procs.findIndex(p => p.pid === pid); if (i >= 0) procs.splice(i, 1); continue; }
     if (r.parkedJobId && aliveJobs.has(r.parkedJobId)) { const i = procs.findIndex(p => p.pid === pid); if (i >= 0) procs.splice(i, 1); continue; }
     let p = procs.find(x => x.pid === pid);
     if (!p) { const a = allProcs.get(pid); p = { pid, ppid: a.ppid, cpu: a.cpu, cpusec: a.cpusec, etime: a.etime, tty: a.tty, command: a.command, cwd: null, chat: chatPids.has(pid) }; procs.push(p); }
@@ -843,6 +855,14 @@ function initFormDefaultOnce() {
     setFormDefault(true); fs.writeFileSync(flag, new Date().toISOString());
   } catch {}
 }
+async function startUpdateInstall() {
+  if (!updater) return { ok: false, error: '업데이트 준비가 안 됐어요' };
+  if (petMgr) petMgr.say('⬇️ 새 버전을 받는 중… 잠시 후 다시 켜져요', 60000);
+  const r = await updater.install();
+  if (!r.ok && petMgr) petMgr.say('업데이트 실패: ' + r.error, 6000);
+  return r;
+}
+ipcMain.handle('install-update', () => startUpdateInstall());
 ipcMain.handle('form-default', (_e, value) => { try { return { ok: true, on: value == null ? fs.existsSync(FORM_DEFAULT_FILE()) : setFormDefault(!!value) }; } catch (e) { return { ok: false, error: String(e.message || e) }; } });
 ipcMain.handle('codex-form-mode', (_e, id) => { try { return { ok: true, on: codexHooks.toggle(id) }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle('interrupt-session', async (_e, { provider, sessionId, pid }) => {
@@ -1954,6 +1974,12 @@ app.whenReady().then(() => {
   upgradeHooksIfInstalled();
   try { codexHooks.refreshScript(); } catch {} // Codex 훅 스크립트도 최신으로(기존 세션도 다음 호출부터 새 규칙)
   initFormDefaultOnce();
+  // 자동 업데이트: 앱 시작 때 + 6시간마다 GitHub 최신 릴리스 확인 → 메인펫 알림 → 누르면 설치(사용자 결정)
+  updater = createUpdater({ app, quit: (reason) => quitWith(reason || 'update-install'), onAvailable: (u) => {
+    try { refreshTrayMenu(); } catch {}
+    if (petMgr && petMgr.mainWin && !petMgr.mainWin.isDestroyed()) petMgr.mainWin.webContents.send('pet-event', { type: 'update', version: u.version });
+  } });
+  updater.start();
   cleanupStaleStatusFiles();
   createPetManager();
   createTray();
@@ -1963,8 +1989,30 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => app.quit());
+// ── 수명 기록: 밤사이 앱이 조용히 꺼졌는데 충돌 보고·시스템 로그가 없어 원인을 몰랐다(2026-09 실측) → 종료·크래시 이유를 파일로 남긴다
+const LIFE_LOG = () => path.join(app.getPath('userData'), 'hoo-lifecycle.log');
+let quitReason = 'system'; // app.quit()을 부르는 곳에서 이유를 먼저 적는다. 그대로면 macOS(로그아웃·종료 요청 등)가 끝낸 것
+function lifeLog(...parts) {
+  try {
+    const f = LIFE_LOG(), line = new Date().toISOString() + ' ' + parts.map(p => typeof p === 'string' ? p : JSON.stringify(p)).join(' ') + '\n';
+    fs.appendFileSync(f, line);
+    if (fs.statSync(f).size > 256 * 1024) { const keep = fs.readFileSync(f, 'utf8').split('\n').slice(-400).join('\n'); fs.writeFileSync(f, keep); }
+  } catch {}
+}
+const quitWith = (reason) => { quitReason = reason; app.quit(); };
+app.whenReady().then(() => lifeLog('start', 'v' + app.getVersion(), 'pid ' + process.pid));
+process.on('uncaughtException', (e) => lifeLog('uncaughtException', String((e && e.stack) || e)));
+process.on('unhandledRejection', (e) => lifeLog('unhandledRejection', String((e && e.stack) || e)));
+// 화면 프로세스가 죽으면 기록하고 그 창을 다시 불러온다(펫 창들은 렌더러 하나를 공유 → 죽으면 펫이 전부 사라져 '앱이 꺼진' 것처럼 보임)
+app.on('render-process-gone', (_e, wc, details) => {
+  lifeLog('render-process-gone', details);
+  setTimeout(() => { try { if (wc && !wc.isDestroyed()) wc.reload(); } catch {} }, 1000);
+});
+app.on('child-process-gone', (_e, details) => lifeLog('child-process-gone', details));
+// 메뉴 막대 앱이라 창이 모두 닫혀도 종료하지 않는다(이전엔 app.quit() — 창이 모두 닫히는 순간 앱이 조용히 꺼질 수 있었다)
+app.on('window-all-closed', () => lifeLog('window-all-closed (계속 실행)'));
 app.on('before-quit', () => {
+  lifeLog('quit', quitReason);
   if (petMgr) petMgr.stop();
   codex.close();
   for (const [, child] of runs) { try { child.kill('SIGTERM'); } catch {} }

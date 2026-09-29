@@ -66,7 +66,7 @@ git log --format=%B | grep -iE "회사명|사내프로젝트명"   # 커밋 메�
 
 **⭐ 세션 등록 파일(`~/.claude/sessions/<pid>.json`) = 1차 소스(`readSessionRegistry`/`mergeRegistry`)**: pid·sessionId·cwd·name·kind(interactive|bg)·status·messagingSocketPath·parkedJobId/jobId. 실측(2026-09 데몬): 사용자가 세션을 **백그라운드 잡으로 파킹**하면 터미널 프로세스(interactive)는 `parkedJobId`만 남는 껍데기가 되고, 실제 세션은 pty 호스트 아래 **`~/.local/share/claude/versions/<ver> --session-id <sid> --fork-session --resume …`**(kind `bg`, `jobId`)로 돈다 → 실행 파일 이름이 'claude'가 아니라 ps 필터가 놓쳤고(펫 없음), `injectBySessionId`가 pid를 못 찾아 **폼 배달 실패**("폼 전송 못 받았어?"). 처리: 등록된 pid는 실행 파일 이름과 무관하게 세션으로 추가, 껍데기는 잡이 살아있으면 제거(한 세션 한 펫), 등록 sessionId가 있으면 트랜스크립트 행을 정확히 집고 나머지만 위치 휴리스틱. `versions/<ver>` 바이너리도 ps 필터에 추가. 테스트 `test/procs.test.cjs`.
 
-**프로세스 필터 제외(`isInternalClaudeHelper`)**: Claude Code 데몬 도입(2026-09) 후 `claude daemon run …`·`claude bg-pty-host --bg-pty-host /tmp/cc-daemon-<uid>/<id>/spare/….pty.sock`·`claude bg-spare …`·`ClaudeCode.app/…/claude --bg-pty-host …`가 실행 파일 이름 'claude'로 필터를 통과해 cwd `/private/tmp/cc-daemon-…/spare` → **"spare" 펫이 여러 마리** 뜬 실측 버그. 인자(`daemon|bg-pty-host|bg-spare|--bg-*|--spawned-by`) 또는 cwd(`/tmp/cc-daemon-`)로 제외. 판정은 첫 토큰 이후 인자만 검사(프롬프트 텍스트 오탐 방지). 테스트 `test/procs.test.cjs`.
+**프로세스 필터 제외(`isInternalClaudeHelper`)**: Claude Code 데몬 도입(2026-09) 후 `claude daemon run …`·`claude bg-pty-host --bg-pty-host /tmp/cc-daemon-<uid>/<id>/spare/….pty.sock`·`claude bg-spare …`·`ClaudeCode.app/…/claude --bg-pty-host …`가 실행 파일 이름 'claude'로 필터를 통과해 cwd `/private/tmp/cc-daemon-…/spare` → **"spare" 펫이 여러 마리** 뜬 실측 버그. 인자(`daemon|bg-pty-host|bg-spare|--bg-*|--spawned-by`) 또는 cwd(`/tmp/cc-daemon-`)로 제외. 판정은 첫 토큰 이후 인자만 검사(프롬프트 텍스트 오탐 방지). 테스트 `test/procs.test.cjs`. 추가(2026-09 실측): ① `claude agents`(에이전트 목록 화면) 등 **세션이 아닌 하위 명령**을 첫 인자로 제외(`NON_SESSION_SUBCOMMANDS`) — 안 하면 목록 화면이 cwd 이름 펫으로 뜸. ② `bg-spare`가 **세션 등록 파일에도 올라오므로** `mergeRegistry`에서도 `isInternalClaudeHelper`로 거른다(등록 pid는 실행 파일 이름과 무관하게 추가하는 규칙 때문에 필터를 우회했음).
 
 ### 상태 훅 (중요)
 
@@ -243,6 +243,18 @@ cp -R "dist/Hoo-darwin-arm64/Hoo.app" /Applications/
 open "/Applications/Hoo.app"
 ```
 
+### 수명 기록 · 조용한 종료 방지 (2026-09)
+- 실측: 밤사이 앱이 꺼졌는데 충돌 보고·재부팅·시스템 로그가 모두 없어 원인을 못 찾았다. → `~/Library/Application Support/hoo/hoo-lifecycle.log`에 시작·종료 이유(`quitWith(reason)`: `tray-menu`/`panel-button`/`update-install`, 그대로 `system`이면 macOS가 끝낸 것)·`render-process-gone`·`child-process-gone`·잡히지 않은 예외를 남긴다(256KB 넘으면 최근 400줄만).
+- `window-all-closed`에서 **더는 `app.quit()` 하지 않는다**(메뉴 막대 앱). 화면 프로세스가 죽으면 기록 후 그 창을 1초 뒤 `reload()`(펫 창들은 렌더러 공유라 죽으면 전부 사라져 꺼진 것처럼 보임).
+- 다음에 "앱이 꺼져 있다"면 이 파일의 마지막 줄부터 볼 것.
+
+### 자동 업데이트 (`lib/updater.js`, 2026-09)
+- 개발자 인증서가 없어 Squirrel/`electron-updater`는 못 쓴다 → 앱이 직접 처리(사용자 결정: 인증서 없이, **알림 후 클릭 설치**, 앱 시작 때 + 6시간마다 확인).
+- 흐름: GitHub `releases/latest`(비로그인 API, 시간당 60회 한도) → 태그 버전 > `app.getVersion()`이고 `Hoo-<ver>-<arch>.zip` 첨부가 있으면 알림(메인펫 말풍선 1분 + 트레이 '업데이트 설치') → 알림 중 메인펫 클릭 또는 트레이로 설치.
+- 설치: zip 다운로드(리다이렉트 추적) → `ditto -x -k` → **번들 식별자 `com.meamde.hoo`·버전·`codesign --verify --deep --strict` 확인** → 앱 종료 뒤 `swap.sh`가 옛 앱을 `~/.Trash/Hoo-old-<ts>.app`으로 옮기고 새 앱을 넣고 `open`(실패하면 옛 앱 복구). DR이 식별자 기준이라 손쉬운 사용 권한 유지.
+- ⚠️ ad-hoc 서명 검사는 **무결성만** 보장하고 작성자는 증명하지 못한다 → 이 저장소에 릴리스를 올릴 수 있는 사람 = 업데이트 배포자. 릴리스 zip 이름 규칙(`Hoo-<버전>-<arch>.zip`)을 바꾸면 업데이트가 끊긴다.
+- 개발 실행(`app.isPackaged` 거짓)에서는 동작 안 함. 검증: 스크래치에 복사한 Hoo.app을 옛 버전인 척 두고 `bundlePath`·`waitPid`·`relaunch:false` 옵션으로 실제 릴리스를 받아 교체(표시 파일이 사라지는지·새 서명 검사). 테스트 `test/updater.test.cjs`, UI 스모크(알림 말풍선·클릭=설치·다른 말풍선 뒤 복귀).
+
 ### 다른 맥으로 배포 (서명 없이 Gatekeeper 우회)
 - 앱은 개발자 인증서로 정식 서명/공증되지 않았다. ad-hoc 서명만으론 전송 시 **quarantine**이 붙어 Gatekeeper가 막는다.
 - 전송용 압축은 **서명 보존을 위해 `ditto`** 로: `ditto -c -k --keepParent "<app>" ~/Desktop/"Hoo.zip"`
@@ -307,6 +319,8 @@ open "/Applications/Hoo.app"
 16. **이름 변경 Claude Session Pets → Hoo + Hoo 1.0.0 (2026-09)** — 표시 이름·번들 식별자(`com.meamde.hoo`)·패키지 이름(`hoo`) 변경, userData 자동 이전, 버전을 1.0.0으로 새로 시작. 같은 릴리스에 폼 가독성(문서형 밝은 테마·2단·요약/흐름도/표·직접 입력/첨언), 말풍선 3줄 제한, 빌드 보강(점 파일 제외·유출 검사·옛 앱 종료 대기) 포함. 공개 릴리스 zip 유출 사고로 옛 릴리스 v1.0.0~v1.2.3 삭제.
 
 17. **폼 모드 기본 켜짐 + Hoo 1.0.1 (2026-09)** — 전체 기본값 `.default-on` + 폴더별 `.off`(가장 가까운 표시 우선), 첫 실행 때 켜기, 설정 탭 스위치, Codex 공용 기본값, Codex 훅 스크립트 시작 시 갱신(`codexHooks.refreshScript`, hooks.json은 안 건드림). 테스트는 실제 홈을 읽지 않게 임시 `HOME`으로 격리.
+
+18. **자동 업데이트·조용한 종료 방지 + Hoo 1.0.2 (2026-09)** — `lib/updater.js`(GitHub 최신 릴리스 확인 → 메인펫 알림 → 클릭 설치 → 식별자·버전·서명 확인 후 교체), 수명 기록 파일·`window-all-closed`에서 종료 안 함·죽은 렌더러 다시 불러오기, `claude agents` 등 세션 아닌 하위 명령과 등록 파일로 들어온 `bg-spare` 제외.
 
 ## 테스트 방법
 

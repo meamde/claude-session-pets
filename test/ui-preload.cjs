@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('smoke', { fire: (ev) => { if (handler) handler(
 contextBridge.exposeInMainWorld('pet', {
   setIgnoreMouse: noop, petReady: (id) => sent.push(['ready', id]), petMove: (id, x, y, h) => sent.push(['move', id, x, y, h]), petAlert: (id, info) => sent.push(['alert', id, info]),
   petMenu: (id, items) => sent.push(['menu', id, items]), petAction: (id, a) => sent.push(['action', id, a]), mainPetResize: (w, h) => sent.push(['resize', w, h]),
-  togglePanel: () => sent.push(['toggle-panel']), hidePanel: noop, panelEvent: (ev) => sent.push(['panel-event', ev]), panelDialog: noop, settingsChanged: (k) => sent.push(['settings', k]),
+  togglePanel: () => sent.push(['toggle-panel']), installUpdate: async () => { sent.push(['install-update']); return { ok: true }; }, hidePanel: noop, panelEvent: (ev) => sent.push(['panel-event', ev]), panelDialog: noop, settingsChanged: (k) => sent.push(['settings', k]),
   listSessionsView: async () => rows, setDesktopHidden: async () => true, menuPick: noop, menuSize: noop, onPetEvent: (fn) => { handler = fn; },
   quit: noop, getHome: async () => '/tmp', getSavedImage: async () => null, deleteSavedImage: async () => true, getSessionImage: async () => null, onImageChanged: noop, onRunOutput: noop, onRunDone: noop,
   listSessions: async () => rows, listInjectableTtys: async () => [], listForms: async () => [],

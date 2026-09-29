@@ -52,3 +52,16 @@ test('파킹 잡이 죽었으면 원래 터미널 세션은 그대로 보인다'
   const out = mergeRegistry([{ pid: 23368, command: 'claude', cwd: null }], allProcs, registry);
   assert.deepEqual(out.map(p => p.pid), [23368]); assert.equal(out[0].reg.sessionId, '7a64');
 });
+
+test('세션이 아닌 하위 명령(claude agents 등)은 제외, 프롬프트 속 단어는 통과', () => {
+  const { isInternalClaudeHelper } = context;
+  for (const c of ['claude agents', '/Users/me/.local/bin/claude agents', 'claude mcp list', 'claude doctor', 'claude update']) assert.equal(isInternalClaudeHelper(c, '/Users/me/proj'), true, c);
+  for (const c of ['claude -p "agents 정리해줘"', 'claude --resume abc', 'claude']) assert.equal(isInternalClaudeHelper(c, '/Users/me/proj'), false, c);
+});
+test('등록 파일에 올라온 bg-spare 예비 프로세스는 세션에서 빠진다', () => {
+  const { mergeRegistry } = context;
+  const all = new Map([[32155, { ppid: 1, cpu: 0, cpusec: 0, etime: '0:10', tty: null, command: 'claude bg-spare --bg-spare /tmp/cc-daemon-503/x/spare/y.claim.sock' }], [4101, { ppid: 1, cpu: 0, cpusec: 0, etime: '1:00', tty: 'ttys001', command: 'claude' }]]);
+  const reg = new Map([[32155, { pid: 32155, sessionId: 'spare1', cwd: '/Users/me', name: 'spare1', kind: 'bg', jobId: 'spare1' }], [4101, { pid: 4101, sessionId: 'real', cwd: '/Users/me/proj', name: 'proj-1', kind: 'interactive' }]]);
+  const out = mergeRegistry([{ pid: 4101, cwd: '/Users/me/proj' }], all, reg);
+  assert.deepEqual(out.map(p => p.pid), [4101]);
+});

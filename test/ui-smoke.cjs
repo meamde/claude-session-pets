@@ -33,6 +33,12 @@ app.whenReady().then(async () => {
     await m.js(`window.smoke.fire(${JSON.stringify({ type: 'init', wa })})`); await sleep(700);
     const m1 = await m.js(`({ dot: !document.getElementById('dot-sprite').hidden, hp: document.getElementById('hp-session-pct').textContent, moved: window.smoke.sent().some(s => s[0] === 'move' && s[1] === 'main'), resized: window.smoke.sent().some(s => s[0] === 'resize') })`);
     if (!m1.dot || m1.hp !== '42%' || !m1.moved || !m1.resized) throw Error('main pet failed ' + JSON.stringify(m1));
+    // 새 버전 알림: 말풍선이 뜨고, 그동안 메인펫 클릭 = 설치(패널 토글 아님)
+    await m.js(`window.smoke.fire({ type: 'update', version: '9.9.9' })`); await sleep(300);
+    await m.js(`window.smoke.fire({ type: 'say', text: '끼어든 말풍선', ms: 200 })`); await sleep(600); // 다른 말풍선이 끝나면 업데이트 알림이 돌아와야 함
+    const m2 = await m.js(`(() => { const p = document.getElementById('pet'); p.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, screenX: 10, screenY: 10 })); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, screenX: 10, screenY: 10 }));
+      return { bubble: document.getElementById('bubble').textContent, install: window.smoke.sent().some(s => s[0] === 'install-update') }; })()`);
+    if (!/9\.9\.9/.test(m2.bubble) || !m2.install) throw Error('update notice failed ' + JSON.stringify(m2));
     if (m.errors.length) throw Error('main console errors: ' + m.errors.join(' | '));
     // 3) 패널
     const pn = await open('panel.html', {}, 460, 520);
@@ -43,7 +49,7 @@ app.whenReady().then(async () => {
     const pn2 = await pn.js(`({ gauges: document.querySelectorAll('.ugauge').length, caption: document.getElementById('usage-caption').textContent })`);
     if (pn2.gauges < 1 || !/Codex/.test(pn2.caption)) throw Error('panel usage failed ' + JSON.stringify(pn2));
     if (pn.errors.length) throw Error('panel console errors: ' + pn.errors.join(' | '));
-    console.log('UI_PASS', JSON.stringify({ s1, s2, s3, s4, m1, pn1, pn2 }));
+    console.log('UI_PASS', JSON.stringify({ upd: true, s1, s2, s3, s4, m1, pn1, pn2 }));
     app.exit(0);
   } catch (e) { console.error('UI_FAIL', e.message); app.exit(1); }
 });
